@@ -35,12 +35,13 @@
 
 int random_int(int min, int max)
 {
-    return (int)((rand() / (RAND_MAX * 1.0f)) * (max - min) + min);
+    return (int)((rand() / (RAND_MAX * 1.0)) * (max - min) + min);
 }
 
 // set these to real bit values??
 enum object_response_flags
 {
+    OBJ_RESPONSE_NONE = 0,
     OBJ_RESPONSE_CLICKED = 1,
     OBJ_RESPONSE_DRAGGED = 2
 };
@@ -141,13 +142,14 @@ struct game
 {
     struct graphic_layer screen;
     struct audio_bank audio;
-    bool running;
+    bool running, level_initiated;
     int mouseX, mouseY;
     bool mousePressed, mouseClicked, mouseReleased;
     double game_time;
     int score;
     double window_x_scale;
     double window_y_scale;
+    void (*level_loop_func)(struct game *g, struct application *a);
 };
 
 bool mouse_collision(struct game *g, struct visual *v)
@@ -161,6 +163,11 @@ bool mouse_collision(struct game *g, struct visual *v)
         g->mouseY < temp_rect.y || g->mouseY > temp_rect.y + temp_rect.h)
         return false;
     return true;
+}
+void texture_set_color(SDL_Texture *t, double r, double g, double b, double a)
+{
+    SDL_SetTextureColorMod(t, r * 255.0, g * 255.0, b * 255.0);
+    SDL_SetTextureAlphaMod(t, a * 255.0);
 }
 
 void game_add_texture(struct game *g, struct application *a, const char *path)
@@ -238,9 +245,23 @@ void game_change_text(struct game *g, struct application *a, unsigned int text_i
 
     TTF_SizeText(g->screen.font, g->screen.text_objects[text_index].text, &g->screen.text_objects[text_index].graphic.rect.w, &g->screen.text_objects[text_index].graphic.rect.h);
 }
+void game_load_font(struct game *g, struct application *a, const char *path, unsigned int size)
+{
+    g->screen.font = TTF_OpenFont(path, size);
+    if (!g->screen.font)
+    {
+        printf("Error TTF_OpenFont failure() %s\n", TTF_GetError());
+        return;
+    }
+}
 void game_add_text(struct game *g, struct application *a, int x, int y, char *t,
                    enum object_response_flags rf, void (*func)(void *game, void *app, unsigned int i))
 {
+    if (g->screen.font == NULL)
+    {
+        printf("Error called game_add_text() with no font loaded\n");
+        return;
+    }
     if (g->screen.text_object_count >= TEXT_OBJECT_CAP)
     {
         printf("Error too much text\n");
@@ -318,6 +339,10 @@ void game_play_sound(struct game *g, unsigned int index)
     }
     Mix_PlayChannel(-1, g->audio.sounds[index], 0);
 }
+void game_set_level_loop_func(struct game *g, void (*func)(struct game *g, struct application *a))
+{
+    g->level_loop_func = func;
+}
 
 void game_draw(struct game *g, struct application *a)
 {
@@ -369,50 +394,15 @@ void newRandomPosition(struct game *g, unsigned int index)
     g->screen.objects[index].rect.x = rand_gen_x;
     g->screen.objects[index].rect.y = rand_gen_y;
 }
-void updateScore1(void *g, void *a, unsigned int index)
-{
-    struct game *pGame = (struct game *)g;
-    newRandomPosition(pGame, index);
-    pGame->score += 1;
-}
-void updateScore3(void *g, void *a, unsigned int index)
-{
-    struct game *pGame = (struct game *)g;
-    newRandomPosition(pGame, index);
-    pGame->score += 3;
-}
-void updateScore10(void *g, void *a, unsigned int index)
-{
-    struct game *pGame = (struct game *)g;
-    newRandomPosition(pGame, index);
-    pGame->score += 10;
-}
-void set_fullscreen(void *g, void *a, unsigned int index)
-{
-    struct game *pGame = (struct game *)g;
-    struct application *pApp = (struct application *)a;
-    SDL_SetWindowFullscreen(pApp->window, SDL_WINDOW_FULLSCREEN);
-}
-void set_windowed(void *g, void *a, unsigned int index)
-{
-    struct game *pGame = (struct game *)g;
-    struct application *pApp = (struct application *)a;
-    SDL_SetWindowFullscreen(pApp->window, 0);
-}
-void set_quit(void *g, void *a, unsigned int index)
-{
-    struct game *pGame = (struct game *)g;
-    pGame->running = false;
-}
 void game_init(struct game *g, struct application *a)
 {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0)
+    if (SDL_Init(SDL_INIT_EVERYTHING) < 0)
     {
         printf("Error SDL_Init() failure\n");
         return;
     }
 
-    a->window = SDL_CreateWindow("Shooter 01", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, 0);
+    a->window = SDL_CreateWindow("Content", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, 0);
     g->window_x_scale = 1.0;
     g->window_y_scale = 1.0;
 
@@ -444,52 +434,97 @@ void game_init(struct game *g, struct application *a)
     }
     Mix_AllocateChannels(SIMULTANIOUS_SOUND_CAP + 1);
 
-    game_set_music(g, "./audio/music/dull.ogg");
-    game_add_sound(g, "./audio/sfx/collect_1.wav");
-    game_add_sound(g, "./audio/sfx/collect_2.wav");
-    game_add_sound(g, "./audio/sfx/collect_3.wav");
-    game_add_sound(g, "./audio/sfx/collect_4.wav");
-    game_add_sound(g, "./audio/sfx/collect_5.wav");
-    game_play_music(g);
-    game_play_sound(g, 0);
-
     if (TTF_Init() < 0)
     {
         printf("Error TTF_Init() failure %s\n", TTF_GetError());
         return;
     }
 
-    g->screen.font = TTF_OpenFont("./scabber-font/Scabber-q2Mn0.ttf", 32);
-    if (!g->screen.font)
-    {
-        printf("Error TTF_OpenFont failure() %s\n", TTF_GetError());
-        return;
-    }
-
-    game_add_texture(g, a, "./graphics/game/idfk.png");
-    game_add_texture(g, a, "./graphics/game/bg-1.png");
-    game_add_visual(g, 0, 0, 1280, 720, 1, 0, NULL);
-    game_add_visual(g, 100, 100, 10, 10, 0, OBJ_RESPONSE_CLICKED, updateScore10);
-    game_add_visual(g, 250, 250, 50, 50, 0, OBJ_RESPONSE_CLICKED, updateScore3);
-    game_add_visual(g, 500, 500, 100, 100, 0, OBJ_RESPONSE_CLICKED, updateScore1);
-
-    game_add_text(g, a, 10, WINDOW_HEIGHT - 40, "Score: 0", 0, NULL);
-    game_add_text(g, a, WINDOW_WIDTH - 240, WINDOW_HEIGHT - 80, "Fullscreen", OBJ_RESPONSE_CLICKED, set_fullscreen);
-    game_add_text(g, a, WINDOW_WIDTH - 240, WINDOW_HEIGHT - 120, "Windowed", OBJ_RESPONSE_CLICKED, set_windowed);
-    game_add_text(g, a, WINDOW_WIDTH - 240, WINDOW_HEIGHT - 40, "Quit", OBJ_RESPONSE_CLICKED, set_quit);
-
+    g->level_initiated = false;
     g->running = true;
     g->game_time = 0.0;
     g->score = 0;
 }
-
-void game_exit(struct game *g, struct application *a)
+void game_build_level(struct game *g, struct application *a, void (*func)(struct game *g, struct application *a))
 {
-    TTF_CloseFont(g->screen.font);
+    func(g, a);
+    g->level_initiated = true;
+}
+void game_destroy_level(struct game *g, struct application *a)
+{
+    for (int i = 0; i < g->screen.object_count; ++i)
+    {
+        g->screen.objects[i].rect.x = 0.0;
+        g->screen.objects[i].rect.y = 0.0;
+        g->screen.objects[i].rect.w = 0.0;
+        g->screen.objects[i].rect.h = 0.0;
+        g->screen.objects[i].func = NULL;
+        g->screen.objects[i].response_flags = 0;
+        g->screen.objects[i].texture = -1;
+        g->screen.objects[i].sx = 0.0;
+        g->screen.objects[i].sy = 0.0;
+        g->screen.objects[i].sw = 0.0;
+        g->screen.objects[i].sh = 0.0;
+        g->screen.objects[i].real_sx = 0.0;
+        g->screen.objects[i].real_sy = 0.0;
+        g->screen.objects[i].real_sw = 0.0;
+        g->screen.objects[i].real_sh = 0.0;
+    }
+    g->screen.object_count = 0;
     for (int i = 0; i < g->screen.texture_count; ++i)
     {
         SDL_DestroyTexture(g->screen.textures[i]);
     }
+    g->screen.texture_count = 0;
+    SDL_free(g->screen.font);
+    g->screen.font = NULL;
+    for (int i = 0; i < g->screen.text_object_count; ++i)
+    {
+        strcpy(g->screen.text_objects[i].text, "");
+        SDL_DestroyTexture(g->screen.text_objects[i].texture);
+
+        g->screen.text_objects[i].graphic.rect.x = 0.0;
+        g->screen.text_objects[i].graphic.rect.y = 0.0;
+        g->screen.text_objects[i].graphic.rect.w = 0.0;
+        g->screen.text_objects[i].graphic.rect.h = 0.0;
+        g->screen.text_objects[i].graphic.func = NULL;
+        g->screen.text_objects[i].graphic.response_flags = 0;
+        g->screen.text_objects[i].graphic.texture = -1;
+        g->screen.text_objects[i].graphic.sx = 0.0;
+        g->screen.text_objects[i].graphic.sy = 0.0;
+        g->screen.text_objects[i].graphic.sw = 0.0;
+        g->screen.text_objects[i].graphic.sh = 0.0;
+        g->screen.text_objects[i].graphic.real_sx = 0.0;
+        g->screen.text_objects[i].graphic.real_sy = 0.0;
+        g->screen.text_objects[i].graphic.real_sw = 0.0;
+        g->screen.text_objects[i].graphic.real_sh = 0.0;
+    }
+    g->screen.text_object_count = 0;
+
+    if (g->audio.music != NULL)
+    {
+        Mix_FreeMusic(g->audio.music);
+        g->audio.music = NULL;
+    }
+    for (int i = 0; i < g->audio.sound_count; ++i)
+    {
+        Mix_FreeChunk(g->audio.sounds[i]);
+        g->audio.sounds[i] = NULL;
+    }
+    g->audio.sound_count = 0;
+    g->level_loop_func = NULL;
+
+    g->level_initiated = false;
+}
+void game_change_level(struct game *g, struct application *a, void (*func)(struct game *g, struct application *a))
+{
+    game_destroy_level(g, a);
+    game_build_level(g, a, func);
+}
+
+void game_exit(struct game *g, struct application *a)
+{
+    game_destroy_level(g, a);
     SDL_DestroyRenderer(a->renderer);
     SDL_DestroyWindow(a->window);
 }
@@ -501,24 +536,27 @@ void logic_loop(struct game *g, struct application *a);
 bool game_loop(struct game *g, struct application *a)
 {
     g->game_time += 0.01;
-    SDL_SetRenderDrawColor(a->renderer, 90, 90, 200, 255);
+    SDL_SetRenderDrawColor(a->renderer, 255, 255, 255, 255);
     SDL_RenderClear(a->renderer);
 
     event_loop(g);
-    logic_loop(g, a);
+    if (g->level_initiated)
+    {
+        logic_loop(g, a);
+        if (g->level_loop_func != NULL)
+        {
+            g->level_loop_func(g, a);
+        }
 
-    char scoretext[TEXT_BUFFER_CAP] = "Score: ";
-    char input[sizeof(long)];
-    sprintf(input, "%d", g->score);
-    strcat(scoretext, input);
-    game_change_text(g, a, 0, scoretext);
-
-    draw_loop(g, a);
+        draw_loop(g, a);
+    }
 
     SDL_Delay(1000 / 60);
 
     if (g->running == false)
+    {
         return false;
+    }
 
     return true;
 }

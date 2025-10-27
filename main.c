@@ -1,4 +1,4 @@
-#include "system.h"
+#include "data.h"
 
 struct application app;
 struct game g;
@@ -12,6 +12,7 @@ void main_loop()
     if (!main_initiated)
     {
         game_init(&g, &app);
+        game_build_level(&g, &app, level_menu);
         main_initiated = true;
     }
     game_loop(&g, &app);
@@ -26,6 +27,7 @@ int main()
 #ifndef __EMSCRIPTEN__
     game_init(&g, &app);
 
+    game_build_level(&g, &app, level_menu);
     while (game_loop(&g, &app))
     {
     }
