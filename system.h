@@ -83,6 +83,11 @@ void timer_start(struct timer *t, void *g, void *a)
         t->start_func(g, a, t->start_func_pRef);
     }
 }
+void timer_unlink(struct timer *t)
+{
+    t->pLink = NULL;
+    t->pLinkInt8 = NULL;
+}
 void timer_update(struct timer *t, void *g, void *a)
 {
     if (!t->running)
@@ -270,7 +275,7 @@ struct graphic_layer
     struct colored_texture clr_textures[TEXTURE_CAP];
     unsigned int texture_count;
 
-    struct visual objects[OBJECT_CAP];
+    struct visual *objects[OBJECT_CAP];
     unsigned int object_count;
     struct text text_objects[TEXT_OBJECT_CAP];
     unsigned int text_object_count;
@@ -351,7 +356,7 @@ struct timer *game_add_timer(struct game *g, double start_time, double end_time,
 
     return &g->timers[g->timer_count - 1];
 }
-void game_timer_add_func(struct game *g, struct timer *t, void (*func)(void *g, void *a, void *pr), void *func_pr)
+void game_timer_set_func(struct game *g, struct timer *t, void (*func)(void *g, void *a, void *pr), void *func_pr)
 {
     t->func = func;
     if (func_pr != NULL)
@@ -367,7 +372,7 @@ void game_timer_link_int8(struct game *g, struct timer *t, uint8_t *pL)
 {
     t->pLinkInt8 = pL;
 }
-void game_timer_add_start_func(struct game *g, struct timer *t, void (*func)(void *g, void *a, void *pr), void *func_pr)
+void game_timer_set_start_func(struct game *g, struct timer *t, void (*func)(void *g, void *a, void *pr), void *func_pr)
 {
     t->start_func = func;
     if (func_pr != NULL)
@@ -409,44 +414,58 @@ struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, struc
         printf("Error too many objects\n");
         return NULL;
     }
-    g->screen.objects[g->screen.object_count].rect.x = x;
-    g->screen.objects[g->screen.object_count].rect.y = y;
-    g->screen.objects[g->screen.object_count].rect.w = w;
-    g->screen.objects[g->screen.object_count].rect.h = h;
-    g->screen.objects[g->screen.object_count].pTexture = tex;
-    g->screen.objects[g->screen.object_count].response_trigger = rf;
-    g->screen.objects[g->screen.object_count].func = func;
+
+    g->screen.objects[g->screen.object_count] = malloc(sizeof(struct visual)); // bad idea??
+    g->screen.objects[g->screen.object_count]->rect.x = x;
+    g->screen.objects[g->screen.object_count]->rect.y = y;
+    g->screen.objects[g->screen.object_count]->rect.w = w;
+    g->screen.objects[g->screen.object_count]->rect.h = h;
+    g->screen.objects[g->screen.object_count]->sx = 0;
+    g->screen.objects[g->screen.object_count]->sy = 0;
+    g->screen.objects[g->screen.object_count]->sw = 0;
+    g->screen.objects[g->screen.object_count]->sh = 0;
+    g->screen.objects[g->screen.object_count]->real_sx = 0;
+    g->screen.objects[g->screen.object_count]->real_sy = 0;
+    g->screen.objects[g->screen.object_count]->real_sw = 0;
+    g->screen.objects[g->screen.object_count]->real_sh = 0;
+    g->screen.objects[g->screen.object_count]->pTexture = tex;
+    g->screen.objects[g->screen.object_count]->response_trigger = rf;
+    g->screen.objects[g->screen.object_count]->func = func;
 
     if (func_pr != NULL)
-        g->screen.objects[g->screen.object_count].func_pRef = func_pr;
+        g->screen.objects[g->screen.object_count]->func_pRef = func_pr;
     if (func_pr == NULL)
-        g->screen.objects[g->screen.object_count].func_pRef = &g->screen.objects[g->screen.object_count];
+        g->screen.objects[g->screen.object_count]->func_pRef = g->screen.objects[g->screen.object_count];
 
     SDL_Color clr;
     clr.r = 255;
     clr.g = 255;
     clr.b = 255;
     clr.a = 255;
-    g->screen.objects[g->screen.object_count].color = clr;
+    g->screen.objects[g->screen.object_count]->color = clr;
     ++g->screen.object_count;
 
-    return &g->screen.objects[g->screen.object_count - 1];
+    return g->screen.objects[g->screen.object_count - 1];
 }
 void game_destroy_visual(struct game *g, struct visual *v)
 {
     bool found = false;
-    printf("alpha first %i\n", v->color.a);
-    struct visual *plast_obj = &g->screen.objects[g->screen.object_count - 1];
+    struct visual *plast_obj = g->screen.objects[g->screen.object_count - 1];
 
-    // v = the clicked circle object
-    // plast_obj = transition fade object
+    for (int i = 0; i < g->screen.object_count; ++i)
+    {
+        if (g->screen.objects[i] == v)
+        {
+            g->screen.objects[i] = plast_obj;
+            found = true;
+        }
+    }
 
-    *v = *plast_obj;
-    // visual_copy(plast_obj, v);
+    if (!found)
+        return;
 
-    // visual_destroy(plast_obj);
+    free(v); // also bad idea???
     --g->screen.object_count;
-    printf("alpha second %i\n", v->color.a);
 }
 void game_change_text(struct game *g, struct application *a, struct text *t, char updated_text[TEXT_BUFFER_CAP])
 {
@@ -581,28 +600,28 @@ void game_draw(struct game *g, struct application *a)
 {
     for (int i = 0; i < g->screen.object_count; ++i)
     {
-        if (g->screen.objects[i].pTexture == NULL)
+        if (g->screen.objects[i]->pTexture == NULL)
             continue;
 
-        if (colors_different(g->screen.objects[i].color, g->screen.objects[i].pTexture->color))
+        if (colors_different(g->screen.objects[i]->color, g->screen.objects[i]->pTexture->color))
         {
-            SDL_Color clr1 = g->screen.objects[i].color;
-            SDL_Color clr2 = g->screen.objects[i].pTexture->color;
-            texture_set_color(g->screen.objects[i].pTexture->texture, g->screen.objects[i].color);
-            g->screen.objects[i].pTexture->color = g->screen.objects[i].color;
+            SDL_Color clr1 = g->screen.objects[i]->color;
+            SDL_Color clr2 = g->screen.objects[i]->pTexture->color;
+            texture_set_color(g->screen.objects[i]->pTexture->texture, g->screen.objects[i]->color);
+            g->screen.objects[i]->pTexture->color = g->screen.objects[i]->color;
         }
 
-        SDL_Rect temp_rect = g->screen.objects[i].rect;
-        temp_rect.x += g->screen.objects[i].real_sx;
-        temp_rect.y += g->screen.objects[i].real_sy;
-        temp_rect.w += g->screen.objects[i].real_sw;
-        temp_rect.h += g->screen.objects[i].real_sh;
+        SDL_Rect temp_rect = g->screen.objects[i]->rect;
+        temp_rect.x += g->screen.objects[i]->real_sx;
+        temp_rect.y += g->screen.objects[i]->real_sy;
+        temp_rect.w += g->screen.objects[i]->real_sw;
+        temp_rect.h += g->screen.objects[i]->real_sh;
 
         temp_rect.x *= g->window_x_scale;
         temp_rect.w *= g->window_x_scale;
         temp_rect.y *= g->window_y_scale;
         temp_rect.h *= g->window_y_scale;
-        SDL_RenderCopy(a->renderer, g->screen.objects[i].pTexture->texture, NULL, &temp_rect);
+        SDL_RenderCopy(a->renderer, g->screen.objects[i]->pTexture->texture, NULL, &temp_rect);
     }
     for (int i = 0; i < g->screen.text_object_count; ++i)
     {
@@ -631,7 +650,7 @@ void game_init(struct game *g, struct application *a)
         return;
     }
 
-    a->window = SDL_CreateWindow("Content", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, 0);
+    a->window = SDL_CreateWindow("Content", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_RESIZABLE);
     g->window_x_scale = 1.0;
     g->window_y_scale = 1.0;
 
@@ -686,7 +705,7 @@ void game_destroy_level(struct game *g, struct application *a)
 {
     for (int i = 0; i < g->screen.object_count; ++i)
     {
-        visual_destroy(&g->screen.objects[i]);
+        visual_destroy(g->screen.objects[i]);
     }
     g->screen.object_count = 0;
     for (int i = 0; i < g->screen.texture_count; ++i)
@@ -835,7 +854,7 @@ void logic_loop(struct game *g, struct application *a)
     // objects
     for (int i = 0; i < g->screen.object_count; ++i)
     {
-        handle_visual_responses(g, a, &g->screen.objects[i]);
+        handle_visual_responses(g, a, g->screen.objects[i]);
     }
 
     // text (please combine this with objects somehow)

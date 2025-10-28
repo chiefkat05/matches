@@ -5,6 +5,8 @@
 
 // generic functions
 void level_start_timer(void *g, void *a, void *pr);
+void level_timer_unlink(void *g, void *a, void *pr);
+void level_destroy_object(void *g, void *a, void *pr);
 
 void set_fullscreen(void *g, void *a, void *pr);
 void set_windowed(void *g, void *a, void *pr);
@@ -14,15 +16,14 @@ void set_level_menu(void *g, void *a, void *pr);
 
 // level_clicker functions
 void level_clicker_loop(struct game *g, struct application *a);
-void create_clickable_circle(struct game *g, int xpos, int ypos, int width, int height, void (*func)(void *g, void *a, void *pr));
+void create_clickable_circle(struct game *g, struct application *a, int xpos, int ypos, int width, int height, void (*func)(void *g, void *a, void *pr));
 void updateScore1(void *g, void *a, void *pr);
 void randomDingSound(void *g, void *a, void *pr);
 void spawnCircle(void *g, void *a, void *pr);
 void newRandomPosition(struct game *g, void *pr);
 
 // features I want:
-// ability to destroy objects (possibly necessary to lessen the grip of the int index things in your game struct. Replace with pointers?)
-// ability to create objects during loop (these 'features' may already be implement-able but I want confirmation that they can be done)
+// a z-index for objects and text that determines draw order (higher number means draw later)
 // make the clickable circles actually appear every so often using g->game_time and then slowly disappear
 // make one big clickable circle that always gives points
 // a game struct-compatible level_data structure??? that can help instead of having global variables for say score multi and stuff??? maybe this is stupider than just global variables???
@@ -54,6 +55,7 @@ struct level_clicker_data_struct
     struct text *scoreText;
     int circleCount;
     struct timer *circleAppearTimer;
+    struct timer *circleAppearAlphaTimer;
     int score;
     struct visual *transitionfade;
 };
@@ -65,8 +67,8 @@ void level_clicker(struct game *g, struct application *a)
     struct colored_texture *bgTexture = game_add_texture(g, a, "./graphics/game/bg-1.png");
     game_add_visual(g, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, bgTexture, OBJ_RESPONSE_NONE, NULL, NULL);
 
-    create_clickable_circle(g, 500, 500, 100, 100, updateScore1);
-    create_clickable_circle(g, 1000, 500, 100, 100, updateScore1);
+    create_clickable_circle(g, a, 500, 500, 100, 100, updateScore1);
+    create_clickable_circle(g, a, 1000, 500, 100, 100, updateScore1);
 
     struct timer *quit_timer = game_add_timer(g, 0.0, 255.0, 10.0, false);
     struct timer *menu_timer = game_add_timer(g, 0.0, 255.0, 10.0, false);
@@ -81,12 +83,15 @@ void level_clicker(struct game *g, struct application *a)
     visual_set_color(level_clicker_data.transitionfade, 1.0, 1.0, 1.0, 0.0);
 
     game_timer_link_int8(g, menu_timer, &level_clicker_data.transitionfade->color.a);
-    game_timer_add_func(g, menu_timer, set_level_menu, NULL);
+    game_timer_set_func(g, menu_timer, set_level_menu, NULL);
     game_timer_link_int8(g, quit_timer, &level_clicker_data.transitionfade->color.a);
-    game_timer_add_func(g, quit_timer, set_quit, NULL);
+    game_timer_set_func(g, quit_timer, set_quit, NULL);
 
-    level_clicker_data.circleAppearTimer = game_add_timer(g, 10.0, 0.0, 0.02, true);
-    game_timer_add_func(g, level_clicker_data.circleAppearTimer, spawnCircle, NULL);
+    level_clicker_data.circleAppearTimer = game_add_timer(g, 10.0, 0.0, 0.1, true);
+    game_timer_set_func(g, level_clicker_data.circleAppearTimer, spawnCircle, NULL);
+
+    level_clicker_data.circleAppearAlphaTimer = game_add_timer(g, 0.0, 255.0, 10.0, true);
+    game_timer_set_func(g, level_clicker_data.circleAppearAlphaTimer, level_timer_unlink, NULL);
 
     game_set_music(g, "./audio/music/dull.ogg");
     game_add_sound(g, "./audio/sfx/collect_1.wav");
@@ -109,12 +114,10 @@ void level_clicker_loop(struct game *g, struct application *a)
     strcat(scorestr, input);
     game_change_text(g, a, level_clicker_data.scoreText, scorestr);
 
-    if (g->game_time > 1.0)
+    if (g->game_time > 0.0)
     {
         level_start_timer(g, a, level_clicker_data.circleAppearTimer);
     }
-
-    printf("huh %p, colorp = %p\n", level_clicker_data.transitionfade, &level_clicker_data.transitionfade->color.a);
 }
 
 // game functions
@@ -150,14 +153,12 @@ void newRandomPosition(struct game *g, void *pr)
 void spawnCircle(void *g, void *a, void *pr)
 {
     struct game *pGame = (struct game *)g;
-    struct application *pApp = (struct application *)a;
 
-    create_clickable_circle(g, 0, 0, 100, 100, updateScore1);
+    create_clickable_circle(pGame, a, 0, 0, 100, 100, updateScore1);
 }
 void level_start_timer(void *g, void *a, void *pr)
 {
     struct game *pGame = (struct game *)g;
-    struct application *pApp = (struct application *)a;
     struct timer *pTimer = (struct timer *)pr;
 
     timer_start(pTimer, g, a);
@@ -165,9 +166,7 @@ void level_start_timer(void *g, void *a, void *pr)
 
 void updateScore1(void *g, void *a, void *pr)
 {
-    struct game *pGame = (struct game *)g;
-    struct visual *pObj = (struct visual *)pr;
-    game_destroy_visual(g, pObj);
+    randomDingSound(g, a, pr);
     ++level_clicker_data.score;
     --level_clicker_data.circleCount;
 }
@@ -188,16 +187,38 @@ void set_quit(void *g, void *a, void *pr)
     struct game *pGame = (struct game *)g;
     pGame->running = false;
 }
-
-void create_clickable_circle(struct game *g, int xpos, int ypos, int width, int height, void (*func)(void *g, void *a, void *pr))
+void level_timer_unlink(void *g, void *a, void *pr)
 {
+    struct timer *pTimer = (struct timer *)pr;
+    timer_unlink(pTimer);
+}
+void level_destroy_object(void *g, void *a, void *pr)
+{
+    struct game *pGame = (struct game *)g;
+    struct visual *pObj = (struct visual *)pr;
+
+    game_destroy_visual(pGame, pObj);
+}
+
+void create_clickable_circle(struct game *g, struct application *a, int xpos, int ypos, int width, int height, void (*func)(void *g, void *a, void *pr))
+{
+    if (level_clicker_data.circleCount > 8)
+    {
+        return;
+    }
+
     struct timer *timer = game_add_timer(g, 255.0, 0.0, 10.0, true);
 
     struct visual *circle = game_add_visual(g, xpos, ypos, width, height, level_clicker_data.circleTexture, OBJ_RESPONSE_CLICKED, level_start_timer, timer);
+    if (level_clicker_data.circleAppearAlphaTimer != NULL && level_clicker_data.circleAppearAlphaTimer->pLinkInt8 == NULL)
+    {
+        game_timer_link_int8(g, level_clicker_data.circleAppearAlphaTimer, &circle->color.a);
+        level_start_timer(g, a, level_clicker_data.circleAppearAlphaTimer);
+    }
 
     game_timer_link_int8(g, timer, &circle->color.a);
-    game_timer_add_start_func(g, timer, randomDingSound, NULL);
-    game_timer_add_func(g, timer, func, circle);
+    game_timer_set_start_func(g, timer, func, NULL);
+    game_timer_set_func(g, timer, level_destroy_object, circle);
     newRandomPosition(g, circle);
     ++level_clicker_data.circleCount;
 }
