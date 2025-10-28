@@ -3,83 +3,22 @@
 
 #include "system.h"
 
-// game functions
-void randomDingSound(void *g, void *a, void *pr)
-{
-    struct game *pGame = (struct game *)g;
-    int rand_gen_sound = random_int(0, 5);
-    int rand_gen_volume = random_int(30, 60);
-    game_set_sound_volume(pGame, pGame->audio.sounds[rand_gen_sound], rand_gen_volume);
-    game_play_sound(pGame, pGame->audio.sounds[rand_gen_sound]);
-}
-void newRandomPosition(struct game *g, void *pr)
-{
-    struct visual *pObj = (struct visual *)pr;
-    int rand_gen_x = random_int(0, WINDOW_WIDTH - 100);
-    int rand_gen_y = random_int(0, WINDOW_HEIGHT - 200);
-    pObj->rect.x = rand_gen_x;
-    pObj->rect.y = rand_gen_y;
-}
-void level_start_timer(void *g, void *a, void *pr)
-{
-    struct game *pGame = (struct game *)g;
-    struct application *pApp = (struct application *)a;
-    struct timer *pTimer = (struct timer *)pr;
+// generic functions
+void level_start_timer(void *g, void *a, void *pr);
 
-    timer_start(pTimer, g, a);
-}
-
-void updateScore1(void *g, void *a, void *pr)
-{
-    struct game *pGame = (struct game *)g;
-    newRandomPosition(pGame, pr);
-    pGame->score += 1;
-}
-void updateScore3(void *g, void *a, void *pr)
-{
-    struct game *pGame = (struct game *)g;
-    newRandomPosition(pGame, pr);
-    pGame->score += 3;
-}
-void updateScore10(void *g, void *a, void *pr)
-{
-    struct game *pGame = (struct game *)g;
-    newRandomPosition(pGame, pr);
-    pGame->score += 10;
-}
-void set_fullscreen(void *g, void *a, void *pr)
-{
-    struct game *pGame = (struct game *)g;
-    struct application *pApp = (struct application *)a;
-    SDL_SetWindowFullscreen(pApp->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-}
-void set_windowed(void *g, void *a, void *pr)
-{
-    struct game *pGame = (struct game *)g;
-    struct application *pApp = (struct application *)a;
-    SDL_SetWindowFullscreen(pApp->window, 0);
-}
-void set_quit(void *g, void *a, void *pr)
-{
-    struct game *pGame = (struct game *)g;
-    pGame->running = false;
-}
+void set_fullscreen(void *g, void *a, void *pr);
+void set_windowed(void *g, void *a, void *pr);
+void set_quit(void *g, void *a, void *pr);
 void set_level_clicker(void *g, void *a, void *pr);
 void set_level_menu(void *g, void *a, void *pr);
 
+// level_clicker functions
 void level_clicker_loop(struct game *g, struct application *a);
-
-struct colored_texture *circleTexture;
-void create_clickable_circle(struct game *g, int xpos, int ypos, int width, int height, void (*func)(void *g, void *a, void *pr))
-{
-    struct timer *timer = game_add_timer(g, 255.0, 0.0, 10.0, true);
-
-    struct visual *circle = game_add_visual(g, xpos, ypos, width, height, circleTexture, OBJ_RESPONSE_CLICKED, level_start_timer, timer);
-
-    game_timer_link_int8(g, timer, &circle->color.a);
-    game_timer_add_start_func(g, timer, randomDingSound, NULL);
-    game_timer_add_func(g, timer, func, circle);
-}
+void create_clickable_circle(struct game *g, int xpos, int ypos, int width, int height, void (*func)(void *g, void *a, void *pr));
+void updateScore1(void *g, void *a, void *pr);
+void randomDingSound(void *g, void *a, void *pr);
+void spawnCircle(void *g, void *a, void *pr);
+void newRandomPosition(struct game *g, void *pr);
 
 // features I want:
 // ability to destroy objects (possibly necessary to lessen the grip of the int index things in your game struct. Replace with pointers?)
@@ -109,11 +48,20 @@ void level_menu(struct game *g, struct application *a)
     game_add_visual(g, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, bgTexture, OBJ_RESPONSE_NONE, NULL, NULL);
 }
 
-struct text *scoreText;
+struct level_clicker_data_struct
+{
+    struct colored_texture *circleTexture;
+    struct text *scoreText;
+    int circleCount;
+    struct timer *circleAppearTimer;
+    int score;
+    struct visual *transitionfade;
+};
+struct level_clicker_data_struct level_clicker_data;
 void level_clicker(struct game *g, struct application *a)
 {
     game_load_font(g, a, "./graphics/fonts/scabber-font/Scabber-q2Mn0.ttf", 32);
-    circleTexture = game_add_texture(g, a, "./graphics/game/idfk.png");
+    level_clicker_data.circleTexture = game_add_texture(g, a, "./graphics/game/idfk.png");
     struct colored_texture *bgTexture = game_add_texture(g, a, "./graphics/game/bg-1.png");
     game_add_visual(g, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, bgTexture, OBJ_RESPONSE_NONE, NULL, NULL);
 
@@ -123,19 +71,22 @@ void level_clicker(struct game *g, struct application *a)
     struct timer *quit_timer = game_add_timer(g, 0.0, 255.0, 10.0, false);
     struct timer *menu_timer = game_add_timer(g, 0.0, 255.0, 10.0, false);
 
-    scoreText = game_add_text(g, a, 10, WINDOW_HEIGHT - 40, "Score: 0", OBJ_RESPONSE_NONE, NULL, NULL);
+    level_clicker_data.scoreText = game_add_text(g, a, 10, WINDOW_HEIGHT - 40, "Score: 0", OBJ_RESPONSE_NONE, NULL, NULL);
     game_add_text(g, a, WINDOW_WIDTH - 240, WINDOW_HEIGHT - 80, "Fullscreen", OBJ_RESPONSE_CLICKED, set_fullscreen, NULL);
     game_add_text(g, a, WINDOW_WIDTH - 240, WINDOW_HEIGHT - 120, "Windowed", OBJ_RESPONSE_CLICKED, set_windowed, NULL);
     game_add_text(g, a, WINDOW_WIDTH - 240, WINDOW_HEIGHT - 240, "Menu", OBJ_RESPONSE_CLICKED, level_start_timer, menu_timer);
     game_add_text(g, a, WINDOW_WIDTH - 240, WINDOW_HEIGHT - 40, "Quit", OBJ_RESPONSE_CLICKED, level_start_timer, quit_timer);
 
-    struct visual *transitionfade = game_add_visual(g, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, circleTexture, OBJ_RESPONSE_NONE, NULL, NULL);
-    visual_set_color(transitionfade, 1.0, 1.0, 1.0, 0.0);
+    level_clicker_data.transitionfade = game_add_visual(g, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, level_clicker_data.circleTexture, OBJ_RESPONSE_NONE, NULL, NULL);
+    visual_set_color(level_clicker_data.transitionfade, 1.0, 1.0, 1.0, 0.0);
 
-    game_timer_link_int8(g, menu_timer, &transitionfade->color.a);
+    game_timer_link_int8(g, menu_timer, &level_clicker_data.transitionfade->color.a);
     game_timer_add_func(g, menu_timer, set_level_menu, NULL);
-    game_timer_link_int8(g, quit_timer, &transitionfade->color.a);
+    game_timer_link_int8(g, quit_timer, &level_clicker_data.transitionfade->color.a);
     game_timer_add_func(g, quit_timer, set_quit, NULL);
+
+    level_clicker_data.circleAppearTimer = game_add_timer(g, 10.0, 0.0, 0.02, true);
+    game_timer_add_func(g, level_clicker_data.circleAppearTimer, spawnCircle, NULL);
 
     game_set_music(g, "./audio/music/dull.ogg");
     game_add_sound(g, "./audio/sfx/collect_1.wav");
@@ -147,21 +98,26 @@ void level_clicker(struct game *g, struct application *a)
     game_play_music(g);
 
     game_set_level_loop_func(g, level_clicker_loop);
+
+    level_clicker_data.score = 0;
 }
 void level_clicker_loop(struct game *g, struct application *a)
 {
     char scorestr[TEXT_BUFFER_CAP] = "Score: ";
     char input[sizeof(long)];
-    sprintf(input, "%d", g->score);
+    sprintf(input, "%d", level_clicker_data.score);
     strcat(scorestr, input);
-    game_change_text(g, a, scoreText, scorestr);
+    game_change_text(g, a, level_clicker_data.scoreText, scorestr);
 
-    // if (g->game_time > 1.0)
-    // {
-    //     game_destroy_visual(g, &g->screen.objects[1]);
-    // }
+    if (g->game_time > 1.0)
+    {
+        level_start_timer(g, a, level_clicker_data.circleAppearTimer);
+    }
+
+    printf("huh %p, colorp = %p\n", level_clicker_data.transitionfade, &level_clicker_data.transitionfade->color.a);
 }
 
+// game functions
 void set_level_clicker(void *g, void *a, void *pr)
 {
     struct game *pGame = (struct game *)g;
@@ -173,6 +129,77 @@ void set_level_menu(void *g, void *a, void *pr)
     struct game *pGame = (struct game *)g;
     struct application *pApp = (struct application *)a;
     game_change_level(pGame, pApp, level_menu);
+}
+
+void randomDingSound(void *g, void *a, void *pr)
+{
+    struct game *pGame = (struct game *)g;
+    int rand_gen_sound = random_int(0, 5);
+    int rand_gen_volume = random_int(30, 60);
+    game_set_sound_volume(pGame, pGame->audio.sounds[rand_gen_sound], rand_gen_volume);
+    game_play_sound(pGame, pGame->audio.sounds[rand_gen_sound]);
+}
+void newRandomPosition(struct game *g, void *pr)
+{
+    struct visual *pObj = (struct visual *)pr;
+    int rand_gen_x = random_int(0, WINDOW_WIDTH - 100);
+    int rand_gen_y = random_int(0, WINDOW_HEIGHT - 200);
+    pObj->rect.x = rand_gen_x;
+    pObj->rect.y = rand_gen_y;
+}
+void spawnCircle(void *g, void *a, void *pr)
+{
+    struct game *pGame = (struct game *)g;
+    struct application *pApp = (struct application *)a;
+
+    create_clickable_circle(g, 0, 0, 100, 100, updateScore1);
+}
+void level_start_timer(void *g, void *a, void *pr)
+{
+    struct game *pGame = (struct game *)g;
+    struct application *pApp = (struct application *)a;
+    struct timer *pTimer = (struct timer *)pr;
+
+    timer_start(pTimer, g, a);
+}
+
+void updateScore1(void *g, void *a, void *pr)
+{
+    struct game *pGame = (struct game *)g;
+    struct visual *pObj = (struct visual *)pr;
+    game_destroy_visual(g, pObj);
+    ++level_clicker_data.score;
+    --level_clicker_data.circleCount;
+}
+void set_fullscreen(void *g, void *a, void *pr)
+{
+    struct game *pGame = (struct game *)g;
+    struct application *pApp = (struct application *)a;
+    SDL_SetWindowFullscreen(pApp->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+}
+void set_windowed(void *g, void *a, void *pr)
+{
+    struct game *pGame = (struct game *)g;
+    struct application *pApp = (struct application *)a;
+    SDL_SetWindowFullscreen(pApp->window, 0);
+}
+void set_quit(void *g, void *a, void *pr)
+{
+    struct game *pGame = (struct game *)g;
+    pGame->running = false;
+}
+
+void create_clickable_circle(struct game *g, int xpos, int ypos, int width, int height, void (*func)(void *g, void *a, void *pr))
+{
+    struct timer *timer = game_add_timer(g, 255.0, 0.0, 10.0, true);
+
+    struct visual *circle = game_add_visual(g, xpos, ypos, width, height, level_clicker_data.circleTexture, OBJ_RESPONSE_CLICKED, level_start_timer, timer);
+
+    game_timer_link_int8(g, timer, &circle->color.a);
+    game_timer_add_start_func(g, timer, randomDingSound, NULL);
+    game_timer_add_func(g, timer, func, circle);
+    newRandomPosition(g, circle);
+    ++level_clicker_data.circleCount;
 }
 
 #endif

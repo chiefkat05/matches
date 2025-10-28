@@ -163,6 +163,24 @@ struct visual
     void *func_pRef;
     void (*func)(void *game, void *app, void *pRef);
 };
+void visual_copy(struct visual *src, struct visual *dest)
+{
+    dest->rect = src->rect;
+    dest->color = src->color;
+    dest->sx = src->sx;
+    dest->sy = src->sy;
+    dest->sw = src->sw;
+    dest->sh = src->sh;
+    dest->real_sx = src->real_sx;
+    dest->real_sy = src->real_sy;
+    dest->real_sw = src->real_sw;
+    dest->real_sh = src->real_sh;
+
+    dest->func = src->func;
+    dest->func_pRef = src->func_pRef;
+    dest->pTexture = src->pTexture;
+    dest->response_trigger = src->response_trigger;
+}
 void visual_set_color(struct visual *v, double r, double g, double b, double a)
 {
     SDL_Color new_clr;
@@ -282,7 +300,6 @@ struct game
     int mouseX, mouseY;
     bool mousePressed, mouseClicked, mouseReleased;
     double game_time;
-    int score;
     double window_x_scale;
     double window_y_scale;
     void (*level_loop_func)(struct game *g, struct application *a);
@@ -418,23 +435,18 @@ struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, struc
 void game_destroy_visual(struct game *g, struct visual *v)
 {
     bool found = false;
+    printf("alpha first %i\n", v->color.a);
     struct visual *plast_obj = &g->screen.objects[g->screen.object_count - 1];
-    for (int i = 0; i < g->screen.object_count; ++i)
-    {
-        if (v == &g->screen.objects[i])
-        {
-            found = true;
-            printf("wow %i vs %i\n", v, &g->screen.objects[i]);
-            g->screen.objects[i] = *plast_obj;
-        }
-    }
-    if (!found)
-    {
-        return;
-    }
 
-    visual_destroy(plast_obj);
+    // v = the clicked circle object
+    // plast_obj = transition fade object
+
+    *v = *plast_obj;
+    // visual_copy(plast_obj, v);
+
+    // visual_destroy(plast_obj);
     --g->screen.object_count;
+    printf("alpha second %i\n", v->color.a);
 }
 void game_change_text(struct game *g, struct application *a, struct text *t, char updated_text[TEXT_BUFFER_CAP])
 {
@@ -660,7 +672,6 @@ void game_init(struct game *g, struct application *a)
     g->level_initiated = false;
     g->running = true;
     g->game_time = 0.0;
-    g->score = 0;
 }
 void game_build_level(struct game *g, struct application *a, void (*func)(struct game *g, struct application *a))
 {
