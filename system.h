@@ -31,13 +31,7 @@
 #define SOUND_CAP 48
 #define SIMULTANEOUS_SOUND_CAP 12
 #define TEXT_BUFFER_CAP 128
-#define TEXT_OBJECT_CAP 14
 #define TIMER_OBJECT_CAP 128
-
-int random_int(int min, int max)
-{
-    return (int)((rand() / (RAND_MAX * 1.0)) * (max - min) + min);
-}
 
 // set these to real bit Doubles??
 enum object_response_trigger_types
@@ -154,8 +148,10 @@ struct colored_texture
 struct visual
 {
     SDL_Rect rect;
+    int z_index;
     int sx, sy;
     int sw, sh;
+    char text[100]; // make this into just a char *
 
     int real_sx, real_sy;
     int real_sw, real_sh;
@@ -185,6 +181,12 @@ void visual_copy(struct visual *src, struct visual *dest)
     dest->func_pRef = src->func_pRef;
     dest->pTexture = src->pTexture;
     dest->response_trigger = src->response_trigger;
+}
+void visual_set_interaction(struct visual *v, enum object_response_trigger_types rt, void (*func)(void *g, void *a, void *pr), void *func_pr)
+{
+    v->response_trigger = rt;
+    v->func = func;
+    v->func_pRef = func_pr;
 }
 void visual_set_color(struct visual *v, double r, double g, double b, double a)
 {
@@ -252,7 +254,6 @@ void visual_destroy(struct visual *v)
     v->rect.h = 0.0;
     v->func = NULL;
     v->response_trigger = 0;
-    v->pTexture = NULL;
     v->sx = 0.0;
     v->sy = 0.0;
     v->sw = 0.0;
@@ -261,14 +262,14 @@ void visual_destroy(struct visual *v)
     v->real_sy = 0.0;
     v->real_sw = 0.0;
     v->real_sh = 0.0;
+    if (strcmp(v->text, "") != 0)
+    {
+        strcpy(v->text, "");
+        SDL_DestroyTexture(v->pTexture->texture);
+        v->pTexture->texture = NULL;
+    }
+    v->pTexture = NULL;
 }
-
-struct text
-{
-    struct visual graphic;
-    SDL_Texture *texture;
-    char text[100];
-};
 
 struct graphic_layer
 {
@@ -277,8 +278,6 @@ struct graphic_layer
 
     struct visual *objects[OBJECT_CAP];
     unsigned int object_count;
-    struct text text_objects[TEXT_OBJECT_CAP];
-    unsigned int text_object_count;
 
     TTF_Font *font;
 };
@@ -301,7 +300,7 @@ struct game
 
     struct graphic_layer screen;
     struct audio_bank audio;
-    bool running, level_initiated;
+    bool running, level_initiated, need_z_reorder;
     int mouseX, mouseY;
     bool mousePressed, mouseClicked, mouseReleased;
     double game_time;
@@ -406,7 +405,7 @@ struct colored_texture *game_add_texture(struct game *g, struct application *a, 
 
     return &g->screen.clr_textures[g->screen.texture_count - 1];
 }
-struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, struct colored_texture *tex,
+struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, int z, struct colored_texture *tex,
                                enum object_response_trigger_types rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
 {
     if (g->screen.object_count >= OBJECT_CAP)
@@ -420,6 +419,7 @@ struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, struc
     g->screen.objects[g->screen.object_count]->rect.y = y;
     g->screen.objects[g->screen.object_count]->rect.w = w;
     g->screen.objects[g->screen.object_count]->rect.h = h;
+    g->screen.objects[g->screen.object_count]->z_index = z;
     g->screen.objects[g->screen.object_count]->sx = 0;
     g->screen.objects[g->screen.object_count]->sy = 0;
     g->screen.objects[g->screen.object_count]->sw = 0;
@@ -431,6 +431,7 @@ struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, struc
     g->screen.objects[g->screen.object_count]->pTexture = tex;
     g->screen.objects[g->screen.object_count]->response_trigger = rf;
     g->screen.objects[g->screen.object_count]->func = func;
+    strcpy(g->screen.objects[g->screen.object_count]->text, "");
 
     if (func_pr != NULL)
         g->screen.objects[g->screen.object_count]->func_pRef = func_pr;
@@ -444,6 +445,7 @@ struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, struc
     clr.a = 255;
     g->screen.objects[g->screen.object_count]->color = clr;
     ++g->screen.object_count;
+    g->need_z_reorder = true;
 
     return g->screen.objects[g->screen.object_count - 1];
 }
@@ -467,31 +469,6 @@ void game_destroy_visual(struct game *g, struct visual *v)
     free(v); // also bad idea???
     --g->screen.object_count;
 }
-void game_change_text(struct game *g, struct application *a, struct text *t, char updated_text[TEXT_BUFFER_CAP])
-{
-    const char *t1 = t->text;
-    const char *t2 = updated_text;
-    if (strcmp(t1, t2) == 0)
-        return;
-    strcpy(t->text, updated_text);
-
-    SDL_Color white = {255, 255, 255, 255};
-    SDL_Surface *surfaceMessage = TTF_RenderText_Solid(g->screen.font, t->text, white);
-    if (!surfaceMessage)
-    {
-        printf("Error TTF_RenderText_Solid() failure\n");
-        return;
-    }
-
-    t->texture = SDL_CreateTextureFromSurface(a->renderer, surfaceMessage);
-    if (!t->texture)
-    {
-        printf("Error SDL_CreateTextureFromSurface() failure\n");
-        return;
-    }
-
-    TTF_SizeText(g->screen.font, t->text, &t->graphic.rect.w, &t->graphic.rect.h);
-}
 void game_load_font(struct game *g, struct application *a, const char *path, unsigned int size)
 {
     g->screen.font = TTF_OpenFont(path, size);
@@ -501,17 +478,17 @@ void game_load_font(struct game *g, struct application *a, const char *path, uns
         return;
     }
 }
-struct text *game_add_text(struct game *g, struct application *a, int x, int y, char *t,
-                           enum object_response_trigger_types rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
+struct visual *game_add_text(struct game *g, struct application *a, int x, int y, int z, char *t,
+                             enum object_response_trigger_types rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
 {
     if (g->screen.font == NULL)
     {
         printf("Error called game_add_text() with no font loaded\n");
         return NULL;
     }
-    if (g->screen.text_object_count >= TEXT_OBJECT_CAP)
+    if (g->screen.object_count >= OBJECT_CAP)
     {
-        printf("Error too much text\n");
+        printf("Error too many objects\n");
         return NULL;
     }
     SDL_Color white = {255, 255, 255, 255};
@@ -522,31 +499,74 @@ struct text *game_add_text(struct game *g, struct application *a, int x, int y, 
         return NULL;
     }
 
-    g->screen.text_objects[g->screen.text_object_count].texture = SDL_CreateTextureFromSurface(a->renderer, surfaceMessage);
-    if (!g->screen.text_objects[g->screen.text_object_count].texture)
+    g->screen.objects[g->screen.object_count] = malloc(sizeof(struct visual)); // bad idea??
+    g->screen.objects[g->screen.object_count]->pTexture = malloc(sizeof(struct colored_texture));
+
+    g->screen.objects[g->screen.object_count]->pTexture->texture = SDL_CreateTextureFromSurface(a->renderer, surfaceMessage);
+    if (!g->screen.objects[g->screen.object_count]->pTexture->texture)
     {
         printf("Error SDL_CreateTextureFromSurface() failure\n");
         return NULL;
     }
 
-    g->screen.text_objects[g->screen.text_object_count].graphic.rect.x = x;
-    g->screen.text_objects[g->screen.text_object_count].graphic.rect.y = y;
-    TTF_SizeText(g->screen.font, t, &g->screen.text_objects[g->screen.text_object_count].graphic.rect.w, &g->screen.text_objects[g->screen.text_object_count].graphic.rect.h);
-    strcpy(g->screen.text_objects[g->screen.text_object_count].text, t);
+    g->screen.objects[g->screen.object_count]->rect.x = x;
+    g->screen.objects[g->screen.object_count]->rect.y = y;
+    TTF_SizeText(g->screen.font, t, &g->screen.objects[g->screen.object_count]->rect.w, &g->screen.objects[g->screen.object_count]->rect.h);
+    g->screen.objects[g->screen.object_count]->z_index = z;
+    strcpy(g->screen.objects[g->screen.object_count]->text, t);
+    g->screen.objects[g->screen.object_count]->response_trigger = rf;
+    g->screen.objects[g->screen.object_count]->func = func;
 
-    g->screen.text_objects[g->screen.text_object_count].graphic.rect.x = x;
-    g->screen.text_objects[g->screen.text_object_count].graphic.rect.y = y;
-    g->screen.text_objects[g->screen.text_object_count].graphic.response_trigger = rf;
-    g->screen.text_objects[g->screen.text_object_count].graphic.func = func;
+    g->screen.objects[g->screen.object_count]->color = white;
+    g->screen.objects[g->screen.object_count]->sx = 0.0;
+    g->screen.objects[g->screen.object_count]->sy = 0.0;
+    g->screen.objects[g->screen.object_count]->sw = 0.0;
+    g->screen.objects[g->screen.object_count]->sh = 0.0;
+    g->screen.objects[g->screen.object_count]->real_sx = 0.0;
+    g->screen.objects[g->screen.object_count]->real_sy = 0.0;
+    g->screen.objects[g->screen.object_count]->real_sw = 0.0;
+    g->screen.objects[g->screen.object_count]->real_sh = 0.0;
+
     if (func_pr != NULL)
-        g->screen.text_objects[g->screen.text_object_count].graphic.func_pRef = func_pr;
+        g->screen.objects[g->screen.object_count]->func_pRef = func_pr;
     if (func_pr == NULL)
-        g->screen.text_objects[g->screen.text_object_count].graphic.func_pRef = &g->screen.text_objects[g->screen.text_object_count];
+        g->screen.objects[g->screen.object_count]->func_pRef = &g->screen.objects[g->screen.object_count];
     ;
-    ++g->screen.text_object_count;
+    ++g->screen.object_count;
+    g->need_z_reorder = true;
 
-    return &g->screen.text_objects[g->screen.text_object_count - 1];
+    return g->screen.objects[g->screen.object_count - 1];
 }
+void game_change_text(struct game *g, struct application *a, struct visual *v, char updated_text[TEXT_BUFFER_CAP])
+{
+    if (strcmp(v->text, "") == 0)
+    {
+        printf("Error object at location %p is not a text object\n", v);
+    }
+    const char *t1 = v->text;
+    const char *t2 = updated_text;
+    if (strcmp(t1, t2) == 0)
+        return;
+    strcpy(v->text, updated_text);
+
+    SDL_Color white = {255, 255, 255, 255};
+    SDL_Surface *surfaceMessage = TTF_RenderText_Solid(g->screen.font, v->text, white);
+    if (!surfaceMessage)
+    {
+        printf("Error TTF_RenderText_Solid() failure\n");
+        return;
+    }
+
+    v->pTexture->texture = SDL_CreateTextureFromSurface(a->renderer, surfaceMessage);
+    if (!v->pTexture->texture)
+    {
+        printf("Error SDL_CreateTextureFromSurface() failure\n");
+        return;
+    }
+
+    TTF_SizeText(g->screen.font, v->text, &v->rect.w, &v->rect.h);
+}
+
 void game_set_music(struct game *g, const char *path)
 {
     g->audio.music = Mix_LoadMUS(path);
@@ -623,23 +643,21 @@ void game_draw(struct game *g, struct application *a)
         temp_rect.h *= g->window_y_scale;
         SDL_RenderCopy(a->renderer, g->screen.objects[i]->pTexture->texture, NULL, &temp_rect);
     }
-    for (int i = 0; i < g->screen.text_object_count; ++i)
-    {
-        if (g->screen.text_objects[i].texture < 0)
-            continue;
+}
 
-        SDL_Rect temp_rect = g->screen.text_objects[i].graphic.rect;
-        temp_rect.x += g->screen.text_objects[i].graphic.real_sx;
-        temp_rect.y += g->screen.text_objects[i].graphic.real_sy;
-        temp_rect.w += g->screen.text_objects[i].graphic.real_sw;
-        temp_rect.h += g->screen.text_objects[i].graphic.real_sh;
+int comp_visual_z(const void *a, const void *b) // maybe needs to be void*
+{
+    struct visual **pObjA = (struct visual **)a;
+    struct visual **pObjB = (struct visual **)b;
+    return (*pObjA)->z_index - (*pObjB)->z_index;
+}
+void game_organize_draw_objects(struct game *g)
+{
+    if (!g->need_z_reorder)
+        return;
 
-        temp_rect.x *= g->window_x_scale;
-        temp_rect.w *= g->window_x_scale;
-        temp_rect.y *= g->window_y_scale;
-        temp_rect.h *= g->window_y_scale;
-        SDL_RenderCopy(a->renderer, g->screen.text_objects[i].texture, NULL, &temp_rect);
-    }
+    qsort(g->screen.objects, g->screen.object_count, sizeof(struct visual **), comp_visual_z);
+    g->need_z_reorder = false;
 }
 
 void game_init(struct game *g, struct application *a)
@@ -690,6 +708,8 @@ void game_init(struct game *g, struct application *a)
 
     g->level_initiated = false;
     g->running = true;
+    g->need_z_reorder = true;
+    game_organize_draw_objects(g);
     g->game_time = 0.0;
 }
 void game_build_level(struct game *g, struct application *a, void (*func)(struct game *g, struct application *a))
@@ -728,18 +748,6 @@ void game_destroy_level(struct game *g, struct application *a)
         SDL_free(g->screen.font);
         g->screen.font = NULL;
     }
-    for (int i = 0; i < g->screen.text_object_count; ++i)
-    {
-        strcpy(g->screen.text_objects[i].text, "");
-        if (g->screen.text_objects[i].texture != NULL)
-        {
-            SDL_DestroyTexture(g->screen.text_objects[i].texture);
-            g->screen.text_objects[i].texture = NULL;
-        }
-
-        visual_destroy(&g->screen.text_objects[i].graphic);
-    }
-    g->screen.text_object_count = 0;
 
     if (g->audio.music != NULL)
     {
@@ -808,6 +816,7 @@ bool game_loop(struct game *g, struct application *a)
         {
             g->level_loop_func(g, a);
         }
+        game_organize_draw_objects(g);
 
         draw_loop(g, a);
     }
@@ -855,12 +864,6 @@ void logic_loop(struct game *g, struct application *a)
     for (int i = 0; i < g->screen.object_count; ++i)
     {
         handle_visual_responses(g, a, g->screen.objects[i]);
-    }
-
-    // text (please combine this with objects somehow)
-    for (int i = 0; i < g->screen.text_object_count; ++i)
-    {
-        handle_visual_responses(g, a, &g->screen.text_objects[i].graphic);
     }
 
     for (int i = 0; i < g->timer_count; ++i)
