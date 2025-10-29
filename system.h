@@ -33,17 +33,45 @@
 #define TEXT_BUFFER_CAP 128
 #define TIMER_OBJECT_CAP 128
 
-// set these to real bit Doubles??
-enum object_response_trigger_types
+enum object_special_type
 {
-    OBJ_RESPONSE_NONE,
-    OBJ_RESPONSE_CLICKED,
-    OBJ_RESPONSE_MOVE_RIGHT,
-    OBJ_RESPONSE_MOVE_LEFT,
-    OBJ_RESPONSE_MOVE_UP,
-    OBJ_RESPONSE_MOVE_DOWN,
-    OBJ_RESPONSE_MOVE_ACTION
+    OBJECT_TYPE_NONE,
+    OBJECT_TYPE_BUTTON,
+    OBJECT_TYPE_GENERIC_2D_PLAYER,
+    OBJECT_TYPE_BUTTON_ACTION_SET,
+    OBJECT_TYPE_BUTTON_ACTION_RESET
 };
+
+#define INPUT_VALID_SCANCODE_LIMIT 8
+enum input_action_type
+{
+    INPUT_NONE,
+    INPUT_RIGHT,
+    INPUT_LEFT,
+    INPUT_UP,
+    INPUT_DOWN,
+    INPUT_INTERACT,
+    input_action_type_limit
+};
+struct input_action_data
+{
+    enum input_action_type type;
+    uint8_t valid_scancodes[INPUT_VALID_SCANCODE_LIMIT];
+    unsigned int scancode_count;
+    bool held, just_pressed, just_released;
+};
+bool input_held(struct input_action_data *data)
+{
+    return data->held;
+}
+bool input_just_pressed(struct input_action_data *data)
+{
+    return data->just_pressed;
+}
+bool input_just_released(struct input_action_data *data)
+{
+    return data->just_released;
+}
 
 struct timer
 {
@@ -151,7 +179,7 @@ struct visual
     int z_index;
     int sx, sy;
     int sw, sh;
-    char text[100]; // make this into just a char *
+    char text[TEXT_BUFFER_CAP]; // make this into just a char *
 
     int real_sx, real_sy;
     int real_sw, real_sh;
@@ -159,7 +187,7 @@ struct visual
     SDL_Color color;
 
     struct colored_texture *pTexture;
-    enum object_response_trigger_types response_trigger;
+    enum object_special_type response_trigger;
 
     void *func_pRef;
     void (*func)(void *game, void *app, void *pRef);
@@ -182,7 +210,7 @@ void visual_copy(struct visual *src, struct visual *dest)
     dest->pTexture = src->pTexture;
     dest->response_trigger = src->response_trigger;
 }
-void visual_set_interaction(struct visual *v, enum object_response_trigger_types rt, void (*func)(void *g, void *a, void *pr), void *func_pr)
+void visual_set_interaction(struct visual *v, enum object_special_type rt, void (*func)(void *g, void *a, void *pr), void *func_pr)
 {
     v->response_trigger = rt;
     v->func = func;
@@ -298,6 +326,8 @@ struct game
     struct timer timers[TIMER_OBJECT_CAP];
     unsigned int timer_count;
 
+    struct input_action_data input_actions[input_action_type_limit];
+
     struct graphic_layer screen;
     struct audio_bank audio;
     bool running, level_initiated, need_z_reorder;
@@ -307,19 +337,135 @@ struct game
     double window_x_scale;
     double window_y_scale;
     void (*level_loop_func)(struct game *g, struct application *a);
-};
 
-bool mouse_collision(struct game *g, struct visual *v)
+    enum input_action_type input_action_being_changed;
+};
+void game_init_input(struct game *g)
 {
-    SDL_Rect temp_rect = v->rect;
-    temp_rect.x *= g->window_x_scale;
-    temp_rect.w *= g->window_x_scale;
-    temp_rect.y *= g->window_y_scale;
-    temp_rect.h *= g->window_y_scale;
-    if (g->mouseX < temp_rect.x || g->mouseX > temp_rect.x + temp_rect.w ||
-        g->mouseY < temp_rect.y || g->mouseY > temp_rect.y + temp_rect.h)
-        return false;
-    return true;
+    for (int i = 0; i < input_action_type_limit; ++i)
+    {
+        g->input_actions[i].held = false;
+        g->input_actions[i].just_pressed = false;
+        g->input_actions[i].just_released = false;
+        g->input_actions[i].type = (enum input_action_type)i;
+        for (int j = 0; j < INPUT_VALID_SCANCODE_LIMIT; ++j)
+        {
+            g->input_actions[i].valid_scancodes[j] = 0;
+        }
+    }
+    g->input_action_being_changed = INPUT_NONE;
+}
+void game_add_input_key(struct game *g, enum input_action_type action, uint8_t key)
+{
+    if (g->input_actions[action].scancode_count >= INPUT_VALID_SCANCODE_LIMIT)
+    {
+        printf("Error too many keycodes on input action %i\n", action);
+        return;
+    }
+
+    g->input_actions[action].valid_scancodes[g->input_actions[action].scancode_count] = key;
+    ++g->input_actions[action].scancode_count;
+}
+void game_reset_input_keys(struct game *g, enum input_action_type action)
+{
+    for (int i = 0; i < g->input_actions[action].scancode_count; ++i)
+    {
+        g->input_actions[action].valid_scancodes[i] = 0;
+    }
+    g->input_actions[action].scancode_count = 0;
+}
+void game_update_input(struct game *g)
+{
+    const uint8_t *keyboard_state = SDL_GetKeyboardState(NULL);
+
+    for (int i = 0; i < input_action_type_limit; ++i)
+    {
+        bool anypressed = false;
+
+        g->input_actions[i].just_pressed = false;
+        g->input_actions[i].just_released = false;
+        for (int j = 0; j < INPUT_VALID_SCANCODE_LIMIT; ++j)
+        {
+            if (keyboard_state[g->input_actions[i].valid_scancodes[j]])
+                anypressed = true;
+        }
+
+        if (!anypressed)
+        {
+            if (g->input_actions[i].held)
+                g->input_actions[i].just_released = true;
+
+            g->input_actions[i].held = false;
+        }
+        if (anypressed)
+        {
+            if (!g->input_actions[i].held)
+                g->input_actions[i].just_pressed = true;
+
+            g->input_actions[i].held = true;
+        }
+    }
+}
+void game_update_input_change(struct game *g)
+{
+    if (g->input_action_being_changed == INPUT_NONE)
+        return;
+
+    int keycount;
+    const uint8_t *map = SDL_GetKeyboardState(&keycount);
+
+    for (int i = 0; i < keycount; ++i)
+    {
+        if (i == SDL_SCANCODE_ESCAPE && map[i])
+        {
+            game_reset_input_keys(g, g->input_action_being_changed);
+            g->input_action_being_changed = INPUT_NONE;
+            return;
+        }
+        if (map[i])
+        {
+            game_add_input_key(g, g->input_action_being_changed, i);
+            g->input_action_being_changed = INPUT_NONE;
+            return;
+        }
+    }
+}
+void game_change_input(struct game *g, enum input_action_type action)
+{
+    g->input_action_being_changed = action;
+}
+bool game_input_just_pressed(struct game *g, enum input_action_type action)
+{
+    return input_just_pressed(&g->input_actions[action]);
+}
+bool game_input_held(struct game *g, enum input_action_type action)
+{
+    return input_held(&g->input_actions[action]);
+}
+bool game_input_just_released(struct game *g, enum input_action_type action)
+{
+    return input_just_released(&g->input_actions[action]);
+}
+const char *game_get_key_name(struct game *g, enum input_action_type action, unsigned int key_index)
+{
+    SDL_Keycode key = SDL_GetKeyFromScancode(g->input_actions[action].valid_scancodes[key_index]);
+    return SDL_GetKeyName(key);
+}
+char *game_get_action_key_names_list(struct game *g, enum input_action_type action)
+{
+    char key_name_list[TEXT_BUFFER_CAP] = "";
+    for (int i = 0; i < g->input_actions[action].scancode_count; ++i)
+    {
+        const char *key_name = game_get_key_name(g, action, i);
+        strcat(key_name_list, key_name);
+
+        if (i < g->input_actions[action].scancode_count - 1)
+            strcat(key_name_list, ", ");
+    }
+    char *output = malloc(sizeof(char) * TEXT_BUFFER_CAP);
+    strcpy(output, key_name_list);
+
+    return output;
 }
 
 void texture_set_color(SDL_Texture *t, SDL_Color clr)
@@ -406,7 +552,7 @@ struct colored_texture *game_add_texture(struct game *g, struct application *a, 
     return &g->screen.clr_textures[g->screen.texture_count - 1];
 }
 struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, int z, struct colored_texture *tex,
-                               enum object_response_trigger_types rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
+                               enum object_special_type rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
 {
     if (g->screen.object_count >= OBJECT_CAP)
     {
@@ -479,7 +625,7 @@ void game_load_font(struct game *g, struct application *a, const char *path, uns
     }
 }
 struct visual *game_add_text(struct game *g, struct application *a, int x, int y, int z, char *t,
-                             enum object_response_trigger_types rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
+                             enum object_special_type rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
 {
     if (g->screen.font == NULL)
     {
@@ -565,6 +711,8 @@ void game_change_text(struct game *g, struct application *a, struct visual *v, c
     }
 
     TTF_SizeText(g->screen.font, v->text, &v->rect.w, &v->rect.h);
+    SDL_SetTextureColorMod(v->pTexture->texture, v->pTexture->color.r, v->pTexture->color.g, v->pTexture->color.b);
+    SDL_SetTextureAlphaMod(v->pTexture->texture, v->pTexture->color.a);
 }
 
 void game_set_music(struct game *g, const char *path)
@@ -625,6 +773,9 @@ void game_draw(struct game *g, struct application *a)
 
         if (colors_different(g->screen.objects[i]->color, g->screen.objects[i]->pTexture->color))
         {
+            if (strcmp(g->screen.objects[i]->text, "") != 0)
+                printf("huh %f\n", g->game_time);
+
             SDL_Color clr1 = g->screen.objects[i]->color;
             SDL_Color clr2 = g->screen.objects[i]->pTexture->color;
             texture_set_color(g->screen.objects[i]->pTexture->texture, g->screen.objects[i]->color);
@@ -705,6 +856,8 @@ void game_init(struct game *g, struct application *a)
         printf("Error TTF_Init() failure %s\n", TTF_GetError());
         return;
     }
+
+    game_init_input(g);
 
     g->level_initiated = false;
     g->running = true;
@@ -831,6 +984,18 @@ bool game_loop(struct game *g, struct application *a)
     return true;
 }
 
+bool mouse_collision(struct game *g, struct visual *v)
+{
+    SDL_Rect temp_rect = v->rect;
+    temp_rect.x *= g->window_x_scale;
+    temp_rect.w *= g->window_x_scale;
+    temp_rect.y *= g->window_y_scale;
+    temp_rect.h *= g->window_y_scale;
+    if (g->mouseX < temp_rect.x || g->mouseX > temp_rect.x + temp_rect.w ||
+        g->mouseY < temp_rect.y || g->mouseY > temp_rect.y + temp_rect.h)
+        return false;
+    return true;
+}
 void handle_visual_responses(struct game *g, struct application *a, struct visual *v)
 {
     visual_update_special(v);
@@ -838,7 +1003,7 @@ void handle_visual_responses(struct game *g, struct application *a, struct visua
 
     switch (v->response_trigger)
     {
-    case OBJ_RESPONSE_CLICKED:
+    case OBJECT_TYPE_BUTTON:
         if (!mouse_collision(g, v))
             break;
 
@@ -856,11 +1021,30 @@ void handle_visual_responses(struct game *g, struct application *a, struct visua
             }
         }
         break;
+    case OBJECT_TYPE_GENERIC_2D_PLAYER:
+        if (game_input_held(g, INPUT_DOWN))
+        {
+            v->rect.y += 10.0;
+        }
+        if (game_input_held(g, INPUT_RIGHT))
+        {
+            v->rect.x += 10.0;
+        }
+        if (game_input_held(g, INPUT_UP))
+        {
+            v->rect.y -= 10.0;
+        }
+        if (game_input_held(g, INPUT_LEFT))
+        {
+            v->rect.x -= 10.0;
+        }
+        break;
+    default:
+        break;
     }
 }
 void logic_loop(struct game *g, struct application *a)
 {
-    // objects
     for (int i = 0; i < g->screen.object_count; ++i)
     {
         handle_visual_responses(g, a, g->screen.objects[i]);
@@ -870,6 +1054,9 @@ void logic_loop(struct game *g, struct application *a)
     {
         timer_update(&g->timers[i], g, a);
     }
+
+    game_update_input(g);
+    game_update_input_change(g);
 }
 
 void draw_loop(struct game *g, struct application *a)
