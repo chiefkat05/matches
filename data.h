@@ -8,10 +8,8 @@ int random_int(int min, int max);
 void level_start_timer(void *g, void *a, void *pr);
 void level_timer_unlink(void *g, void *a, void *pr);
 void level_destroy_object(void *g, void *a, void *pr);
-void level_change_down_input(void *g, void *a, void *pr);
-void level_change_up_input(void *g, void *a, void *pr);
-void level_change_left_input(void *g, void *a, void *pr);
-void level_change_right_input(void *g, void *a, void *pr);
+void level_change_input(void *g, void *a, void *pr);
+void save_input_data(void *g, void *a, void *pr);
 
 void set_fullscreen(void *g, void *a, void *pr);
 void set_windowed(void *g, void *a, void *pr);
@@ -24,13 +22,13 @@ void level_clicker_loop(struct game *g, struct application *a);
 void create_clickable_circle(struct game *g, struct application *a, int xpos, int ypos, int width, int height, void (*func)(void *g, void *a, void *pr));
 void updateScore1(void *g, void *a, void *pr);
 void randomDingSound(void *g, void *a, void *pr);
+void randomStepSound(void *g, void *a, void *pr);
 void spawnCircle(void *g, void *a, void *pr);
 void newRandomPosition(struct game *g, void *pr);
+void animatePlayer(void *g, void *a, void *pr);
 
 // features I want:
-// a more uniform text update system where I can link a pointer like in the timer objects
-// an animation system
-// a struct save mechanic
+// controller support
 // use the save mechanic to hold the player's input specifications and also to define the default inputs when the game is first opened
 // make one big clickable circle that always gives points
 // make a single shop button that spends score in exchange for multi increase
@@ -87,8 +85,11 @@ struct level_clicker_data_struct
     struct visual *upinputtext;
     struct visual *rightinputtext;
     struct visual *leftinputtext;
+
+    struct visual_animation playerAnim;
 };
 struct level_clicker_data_struct level_clicker_data;
+
 void level_clicker(struct game *g, struct application *a)
 {
     game_load_font(g, a, "./graphics/fonts/scabber-font/Scabber-q2Mn0.ttf", 32);
@@ -101,7 +102,12 @@ void level_clicker(struct game *g, struct application *a)
     struct timer *quit_timer = game_add_timer(g, 0.0, 255.0, 10.0, false);
     struct timer *menu_timer = game_add_timer(g, 0.0, 255.0, 10.0, false);
 
-    level_clicker_data.player = game_add_visual(g, 100, 100, 100, 100, 1, dudeTexture, OBJECT_TYPE_GENERIC_2D_PLAYER, NULL, NULL);
+    level_clicker_data.player = game_add_visual(g, 100, 100, 100, 100, 1, dudeTexture, OBJECT_TYPE_GENERIC_2D_PLAYER, animatePlayer, NULL);
+    visual_set_frames(level_clicker_data.player, 2, 1);
+    v_animation_init(&level_clicker_data.playerAnim, level_clicker_data.player);
+    v_animation_add_frame(&level_clicker_data.playerAnim, 10.0, 0, NULL, NULL);
+    v_animation_add_frame(&level_clicker_data.playerAnim, 20.0, 1, randomStepSound, NULL);
+
     game_add_input_key(g, INPUT_DOWN, SDL_SCANCODE_S);
     game_add_input_key(g, INPUT_UP, SDL_SCANCODE_W);
     game_add_input_key(g, INPUT_LEFT, SDL_SCANCODE_A);
@@ -120,10 +126,10 @@ void level_clicker(struct game *g, struct application *a)
     game_add_text(g, a, WINDOW_WIDTH - 240, WINDOW_HEIGHT - 240, 0, "Menu", OBJECT_TYPE_BUTTON, level_start_timer, menu_timer);
     game_add_text(g, a, WINDOW_WIDTH - 240, WINDOW_HEIGHT - 40, 0, "Quit", OBJECT_TYPE_BUTTON, level_start_timer, quit_timer);
 
-    level_clicker_data.downinputtext = game_add_text(g, a, 20, WINDOW_HEIGHT - 80, 0, "Down Key: ", OBJECT_TYPE_BUTTON, level_change_down_input, NULL);
-    level_clicker_data.upinputtext = game_add_text(g, a, 20, WINDOW_HEIGHT - 120, 0, "Up Key: ", OBJECT_TYPE_BUTTON, level_change_up_input, NULL);
-    level_clicker_data.leftinputtext = game_add_text(g, a, 20, WINDOW_HEIGHT - 160, 0, "Left Key: ", OBJECT_TYPE_BUTTON, level_change_left_input, NULL);
-    level_clicker_data.rightinputtext = game_add_text(g, a, 20, WINDOW_HEIGHT - 200, 0, "Right Key: ", OBJECT_TYPE_BUTTON, level_change_right_input, NULL);
+    level_clicker_data.upinputtext = game_add_text(g, a, 20, WINDOW_HEIGHT - 120, 0, "Up Key: ", OBJECT_TYPE_BUTTON, level_change_input, (void *)INPUT_UP);
+    level_clicker_data.leftinputtext = game_add_text(g, a, 20, WINDOW_HEIGHT - 160, 0, "Left Key: ", OBJECT_TYPE_BUTTON, level_change_input, (void *)INPUT_LEFT);
+    level_clicker_data.rightinputtext = game_add_text(g, a, 20, WINDOW_HEIGHT - 200, 0, "Right Key: ", OBJECT_TYPE_BUTTON, level_change_input, (void *)INPUT_RIGHT);
+    level_clicker_data.downinputtext = game_add_text(g, a, 20, WINDOW_HEIGHT - 80, 0, "Down Key: ", OBJECT_TYPE_BUTTON, level_change_input, (void *)INPUT_DOWN);
 
     game_timer_link_int8(g, menu_timer, &level_clicker_data.transitionfade->color.a);
     game_timer_set_func(g, menu_timer, set_level_menu, NULL);
@@ -147,20 +153,38 @@ void level_clicker(struct game *g, struct application *a)
     game_add_sound(g, "./audio/sfx/collect_3.wav");
     game_add_sound(g, "./audio/sfx/collect_4.wav");
     game_add_sound(g, "./audio/sfx/collect_5.wav");
+    game_add_sound(g, "./audio/sfx/step_1.wav");
+    game_add_sound(g, "./audio/sfx/step_2.wav");
+    game_add_sound(g, "./audio/sfx/step_3.wav");
+    game_add_sound(g, "./audio/sfx/step_4.wav");
 
     game_play_music(g);
 
     game_set_level_loop_func(g, level_clicker_loop);
 
     level_clicker_data.score = 0;
+    load_file_data("./game_data/score", &level_clicker_data.score, sizeof(int), 0);
+    load_file_data("./game_data/inputdefaults", &g->input_actions[INPUT_DOWN], sizeof(struct input_action_data), INPUT_DOWN);
+    load_file_data("./game_data/inputdefaults", &g->input_actions[INPUT_UP], sizeof(struct input_action_data), INPUT_UP);
+    load_file_data("./game_data/inputdefaults", &g->input_actions[INPUT_LEFT], sizeof(struct input_action_data), INPUT_LEFT);
+    load_file_data("./game_data/inputdefaults", &g->input_actions[INPUT_RIGHT], sizeof(struct input_action_data), INPUT_RIGHT);
+    load_file_data("./game_data/inputdefaults", &g->input_actions[INPUT_INTERACT], sizeof(struct input_action_data), INPUT_INTERACT);
 }
 void level_clicker_loop(struct game *g, struct application *a)
 {
+    static int old_score = 0;
+    v_animation_update(&level_clicker_data.playerAnim, g, a);
+
     char scorestr[TEXT_BUFFER_CAP] = "Score: ";
     char input[sizeof(long)];
     sprintf(input, "%d", level_clicker_data.score);
     strcat(scorestr, input);
     game_change_text(g, a, level_clicker_data.scoreText, scorestr);
+    if (level_clicker_data.score != old_score)
+    {
+        old_score = level_clicker_data.score;
+        save_file_data("./game_data/score", &level_clicker_data.score, sizeof(int), 1);
+    }
 
     char downinputstr[TEXT_BUFFER_CAP] = "Down Key: ";
     strcat(downinputstr, game_get_action_key_names_list(g, INPUT_DOWN));
@@ -175,10 +199,14 @@ void level_clicker_loop(struct game *g, struct application *a)
     strcat(rightinputstr, game_get_action_key_names_list(g, INPUT_RIGHT));
     game_change_text(g, a, level_clicker_data.rightinputtext, rightinputstr);
 
-    visual_set_color(level_clicker_data.downinputtext, 1.0, 1.0, 1.0, 1.0);
+    game_do_on_input_change(g, a, level_clicker_data.rightinputtext, INPUT_RIGHT, save_input_data);
+    game_do_on_input_change(g, a, level_clicker_data.downinputtext, INPUT_DOWN, save_input_data);
+    game_do_on_input_change(g, a, level_clicker_data.upinputtext, INPUT_UP, save_input_data);
+    game_do_on_input_change(g, a, level_clicker_data.leftinputtext, INPUT_LEFT, save_input_data);
     visual_set_color(level_clicker_data.upinputtext, 1.0, 1.0, 1.0, 1.0);
     visual_set_color(level_clicker_data.leftinputtext, 1.0, 1.0, 1.0, 1.0);
     visual_set_color(level_clicker_data.rightinputtext, 1.0, 1.0, 1.0, 1.0);
+    visual_set_color(level_clicker_data.downinputtext, 1.0, 1.0, 1.0, 1.0);
     if (g->input_action_being_changed == INPUT_DOWN)
     {
         visual_set_color(level_clicker_data.downinputtext, 0.2, 1.0, 0.2, 1.0);
@@ -219,6 +247,19 @@ void level_clicker_loop(struct game *g, struct application *a)
     }
 }
 
+void save_input_data(void *g, void *a, void *pr)
+{
+    struct game *pGame = (struct game *)g;
+    struct visual *pObj = (struct visual *)pr;
+
+    save_file_data("./game_data/inputdefaults", &pGame->input_actions[0], sizeof(struct input_action_data), input_action_type_limit);
+    // make this more efficient possibly ^
+    // if you can make it only save one input at a time that would be nice thanks ^
+}
+void animatePlayer(void *g, void *a, void *pr)
+{
+    v_animation_play(&level_clicker_data.playerAnim);
+}
 // game functions
 int random_int(int min, int max)
 {
@@ -241,6 +282,14 @@ void randomDingSound(void *g, void *a, void *pr)
 {
     struct game *pGame = (struct game *)g;
     int rand_gen_sound = random_int(0, 5);
+    int rand_gen_volume = random_int(30, 60);
+    game_set_sound_volume(pGame, pGame->audio.sounds[rand_gen_sound], rand_gen_volume);
+    game_play_sound(pGame, pGame->audio.sounds[rand_gen_sound]);
+}
+void randomStepSound(void *g, void *a, void *pr)
+{
+    struct game *pGame = (struct game *)g;
+    int rand_gen_sound = random_int(5, 9);
     int rand_gen_volume = random_int(30, 60);
     game_set_sound_volume(pGame, pGame->audio.sounds[rand_gen_sound], rand_gen_volume);
     game_play_sound(pGame, pGame->audio.sounds[rand_gen_sound]);
@@ -304,29 +353,15 @@ void level_destroy_object(void *g, void *a, void *pr)
 
     game_destroy_visual(pGame, pObj);
 }
-void level_change_down_input(void *g, void *a, void *pr)
+void level_change_input(void *g, void *a, void *pr)
 {
     struct game *pGame = (struct game *)g;
+    enum input_action_type action = (enum input_action_type)pr;
 
-    game_change_input(g, INPUT_DOWN);
-}
-void level_change_up_input(void *g, void *a, void *pr)
-{
-    struct game *pGame = (struct game *)g;
-
-    game_change_input(g, INPUT_UP);
-}
-void level_change_left_input(void *g, void *a, void *pr)
-{
-    struct game *pGame = (struct game *)g;
-
-    game_change_input(g, INPUT_LEFT);
-}
-void level_change_right_input(void *g, void *a, void *pr)
-{
-    struct game *pGame = (struct game *)g;
-
-    game_change_input(g, INPUT_RIGHT);
+    if (pGame->input_action_being_changed != action)
+        game_change_input(g, action);
+    else if (pGame->input_action_being_changed == action)
+        game_change_input(g, INPUT_NONE);
 }
 
 void create_clickable_circle(struct game *g, struct application *a, int xpos, int ypos, int width, int height, void (*func)(void *g, void *a, void *pr))

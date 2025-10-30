@@ -1,65 +1,69 @@
 #ifndef SYSTEM_H
 #define SYSTEM_H
 
-#define SDL_MAIN_HANDLED 1
-#ifdef __linux__
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
-#include <SDL2/SDL_mixer.h>
-#include <SDL2/SDL_ttf.h>
-#include <SDL2/SDL_net.h>
-#endif
-#ifndef __linux__
-#include <SDL.h>
-#include <SDL_image.h>
-#include <SDL_mixer.h>
-#include <SDL_ttf.h>
-#include <SDL_net.h>
-#endif
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdbool.h>
+#include "definitions.h"
 
-#define WINDOW_WIDTH 1280
-#define WINDOW_HEIGHT 720
-
-#define SPECIAL_ANIMATION_SPEED 3
-#define SPECIAL_ANIMATION_MIN 2
-
-#define TEXTURE_CAP 24
-#define OBJECT_CAP 128
-#define SOUND_CAP 48
-#define SIMULTANEOUS_SOUND_CAP 12
-#define TEXT_BUFFER_CAP 128
-#define TIMER_OBJECT_CAP 128
-
-enum object_special_type
+void v_animation_init(struct visual_animation *va, struct visual *v)
 {
-    OBJECT_TYPE_NONE,
-    OBJECT_TYPE_BUTTON,
-    OBJECT_TYPE_GENERIC_2D_PLAYER,
-    OBJECT_TYPE_BUTTON_ACTION_SET,
-    OBJECT_TYPE_BUTTON_ACTION_RESET
-};
+    va->pVisual = v;
+    va->frame_count = 0;
+    va->time = 0.0;
+    va->current_frame = 0;
+    va->running = false;
+}
+void v_animation_add_frame(struct visual_animation *va, double et, unsigned int pos_i, void (*func)(void *g, void *a, void *pr), void *func_pr)
+{
+    if (va->frame_count >= VISUAL_ANIMATION_FRAME_LIMIT)
+    {
+        printf("Error too many frames in animation\n");
+        return;
+    }
 
-#define INPUT_VALID_SCANCODE_LIMIT 8
-enum input_action_type
+    va->frames[va->frame_count] = malloc(sizeof(struct visual_animation_frame));
+    va->frames[va->frame_count]->end_time = et;
+    va->frames[va->frame_count]->pos_index = pos_i;
+    va->frames[va->frame_count]->func = func;
+
+    va->frames[va->frame_count]->func_pRef = NULL;
+    if (func_pr != NULL)
+        va->frames[va->frame_count]->func_pRef = func_pr;
+    if (func_pr == NULL && va->pVisual != NULL)
+        va->frames[va->frame_count]->func_pRef = va->pVisual;
+
+    ++va->frame_count;
+}
+
+void v_animation_update(struct visual_animation *va, void *g, void *a)
 {
-    INPUT_NONE,
-    INPUT_RIGHT,
-    INPUT_LEFT,
-    INPUT_UP,
-    INPUT_DOWN,
-    INPUT_INTERACT,
-    input_action_type_limit
-};
-struct input_action_data
+    if (!va->running)
+        return;
+
+    va->time += VISUAL_ANIMATION_SPEED;
+    // frame end
+    if (va->time >= va->frames[va->current_frame]->end_time)
+    {
+        va->time = 0.0;
+        ++va->current_frame;
+        // animation end
+        if (va->current_frame >= va->frame_count)
+        {
+            va->current_frame = 0;
+            va->running = false;
+        }
+
+        if (va->frames[va->current_frame]->func != NULL)
+        {
+            va->frames[va->current_frame]->func(g, a, va->frames[va->current_frame]->func_pRef);
+        }
+        va->pVisual->animation_rect.x = va->pVisual->animation_rect.w * (va->frames[va->current_frame]->pos_index % va->pVisual->x_frames);
+        va->pVisual->animation_rect.y = va->pVisual->animation_rect.h * (va->frames[va->current_frame]->pos_index / va->pVisual->x_frames);
+    }
+}
+void v_animation_play(struct visual_animation *va)
 {
-    enum input_action_type type;
-    uint8_t valid_scancodes[INPUT_VALID_SCANCODE_LIMIT];
-    unsigned int scancode_count;
-    bool held, just_pressed, just_released;
-};
+    va->running = true;
+}
+
 bool input_held(struct input_action_data *data)
 {
     return data->held;
@@ -73,26 +77,6 @@ bool input_just_released(struct input_action_data *data)
     return data->just_released;
 }
 
-struct timer
-{
-    double current_time;
-    double start_time;
-    double end_time;
-    double speed;
-    bool running;
-    bool restart_on_end;
-
-    int timer_direction;
-
-    double *pLink;
-    uint8_t *pLinkInt8;
-
-    void *func_pRef;
-    void (*func)(void *g, void *a, void *pRef);
-
-    void *start_func_pRef;
-    void (*start_func)(void *g, void *a, void *pRef);
-};
 void timer_start(struct timer *t, void *g, void *a)
 {
     if (t->running)
@@ -167,31 +151,6 @@ void timer_update(struct timer *t, void *g, void *a)
         *t->pLinkInt8 = (uint8_t)t->current_time;
 }
 
-struct colored_texture
-{
-    SDL_Texture *texture;
-    SDL_Color color;
-};
-
-struct visual
-{
-    SDL_Rect rect;
-    int z_index;
-    int sx, sy;
-    int sw, sh;
-    char text[TEXT_BUFFER_CAP]; // make this into just a char *
-
-    int real_sx, real_sy;
-    int real_sw, real_sh;
-
-    SDL_Color color;
-
-    struct colored_texture *pTexture;
-    enum object_special_type response_trigger;
-
-    void *func_pRef;
-    void (*func)(void *game, void *app, void *pRef);
-};
 void visual_copy(struct visual *src, struct visual *dest)
 {
     dest->rect = src->rect;
@@ -208,11 +167,11 @@ void visual_copy(struct visual *src, struct visual *dest)
     dest->func = src->func;
     dest->func_pRef = src->func_pRef;
     dest->pTexture = src->pTexture;
-    dest->response_trigger = src->response_trigger;
+    dest->object_type_flags = src->object_type_flags;
 }
-void visual_set_interaction(struct visual *v, enum object_special_type rt, void (*func)(void *g, void *a, void *pr), void *func_pr)
+void visual_set_interaction(struct visual *v, int rt, void (*func)(void *g, void *a, void *pr), void *func_pr)
 {
-    v->response_trigger = rt;
+    v->object_type_flags = rt;
     v->func = func;
     v->func_pRef = func_pr;
 }
@@ -281,7 +240,7 @@ void visual_destroy(struct visual *v)
     v->rect.w = 0.0;
     v->rect.h = 0.0;
     v->func = NULL;
-    v->response_trigger = 0;
+    v->object_type_flags = 0;
     v->sx = 0.0;
     v->sy = 0.0;
     v->sw = 0.0;
@@ -290,56 +249,15 @@ void visual_destroy(struct visual *v)
     v->real_sy = 0.0;
     v->real_sw = 0.0;
     v->real_sh = 0.0;
-    if (strcmp(v->text, "") != 0)
+    if (strcmp(v->text_str, "") != 0)
     {
-        strcpy(v->text, "");
+        strcpy(v->text_str, "");
         SDL_DestroyTexture(v->pTexture->texture);
         v->pTexture->texture = NULL;
     }
     v->pTexture = NULL;
 }
 
-struct graphic_layer
-{
-    struct colored_texture clr_textures[TEXTURE_CAP];
-    unsigned int texture_count;
-
-    struct visual *objects[OBJECT_CAP];
-    unsigned int object_count;
-
-    TTF_Font *font;
-};
-struct audio_bank
-{
-    Mix_Chunk *sounds[SOUND_CAP];
-    unsigned int sound_count;
-    Mix_Music *music;
-};
-
-struct application
-{
-    SDL_Renderer *renderer;
-    SDL_Window *window;
-};
-struct game
-{
-    struct timer timers[TIMER_OBJECT_CAP];
-    unsigned int timer_count;
-
-    struct input_action_data input_actions[input_action_type_limit];
-
-    struct graphic_layer screen;
-    struct audio_bank audio;
-    bool running, level_initiated, need_z_reorder;
-    int mouseX, mouseY;
-    bool mousePressed, mouseClicked, mouseReleased;
-    double game_time;
-    double window_x_scale;
-    double window_y_scale;
-    void (*level_loop_func)(struct game *g, struct application *a);
-
-    enum input_action_type input_action_being_changed;
-};
 void game_init_input(struct game *g)
 {
     for (int i = 0; i < input_action_type_limit; ++i)
@@ -419,15 +337,27 @@ void game_update_input_change(struct game *g)
         if (i == SDL_SCANCODE_ESCAPE && map[i])
         {
             game_reset_input_keys(g, g->input_action_being_changed);
+            g->input_action_just_changed = g->input_action_being_changed;
             g->input_action_being_changed = INPUT_NONE;
             return;
         }
         if (map[i])
         {
             game_add_input_key(g, g->input_action_being_changed, i);
+            g->input_action_just_changed = g->input_action_being_changed;
             g->input_action_being_changed = INPUT_NONE;
             return;
         }
+    }
+}
+void game_do_on_input_change(struct game *g, struct application *a, void *func_pr, enum input_action_type action, void (*func)(void *g, void *a, void *pr))
+{
+    if (g->input_action_just_changed != action)
+        return;
+
+    if (func != NULL)
+    {
+        func(g, a, func_pr);
     }
 }
 void game_change_input(struct game *g, enum input_action_type action)
@@ -552,7 +482,7 @@ struct colored_texture *game_add_texture(struct game *g, struct application *a, 
     return &g->screen.clr_textures[g->screen.texture_count - 1];
 }
 struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, int z, struct colored_texture *tex,
-                               enum object_special_type rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
+                               int rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
 {
     if (g->screen.object_count >= OBJECT_CAP)
     {
@@ -575,9 +505,16 @@ struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, int z
     g->screen.objects[g->screen.object_count]->real_sw = 0;
     g->screen.objects[g->screen.object_count]->real_sh = 0;
     g->screen.objects[g->screen.object_count]->pTexture = tex;
-    g->screen.objects[g->screen.object_count]->response_trigger = rf;
+    g->screen.objects[g->screen.object_count]->object_type_flags = rf;
     g->screen.objects[g->screen.object_count]->func = func;
-    strcpy(g->screen.objects[g->screen.object_count]->text, "");
+    g->screen.objects[g->screen.object_count]->text_str = malloc(sizeof(char));
+    strcpy(g->screen.objects[g->screen.object_count]->text_str, "");
+    g->screen.objects[g->screen.object_count]->x_frames = 1;
+    g->screen.objects[g->screen.object_count]->y_frames = 1;
+    g->screen.objects[g->screen.object_count]->animation_rect.x = 0;
+    g->screen.objects[g->screen.object_count]->animation_rect.y = 0;
+    SDL_QueryTexture(g->screen.objects[g->screen.object_count]->pTexture->texture, NULL, NULL,
+                     &g->screen.objects[g->screen.object_count]->animation_rect.w, &g->screen.objects[g->screen.object_count]->animation_rect.h);
 
     if (func_pr != NULL)
         g->screen.objects[g->screen.object_count]->func_pRef = func_pr;
@@ -594,6 +531,16 @@ struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, int z
     g->need_z_reorder = true;
 
     return g->screen.objects[g->screen.object_count - 1];
+}
+void visual_set_frames(struct visual *v, unsigned int xf, unsigned int yf)
+{
+    v->x_frames = xf;
+    v->y_frames = yf;
+
+    SDL_QueryTexture(v->pTexture->texture, NULL, NULL,
+                     &v->animation_rect.w, &v->animation_rect.h);
+    v->animation_rect.w /= v->x_frames;
+    v->animation_rect.h /= v->y_frames;
 }
 void game_destroy_visual(struct game *g, struct visual *v)
 {
@@ -625,7 +572,7 @@ void game_load_font(struct game *g, struct application *a, const char *path, uns
     }
 }
 struct visual *game_add_text(struct game *g, struct application *a, int x, int y, int z, char *t,
-                             enum object_special_type rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
+                             int rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
 {
     if (g->screen.font == NULL)
     {
@@ -658,9 +605,15 @@ struct visual *game_add_text(struct game *g, struct application *a, int x, int y
     g->screen.objects[g->screen.object_count]->rect.x = x;
     g->screen.objects[g->screen.object_count]->rect.y = y;
     TTF_SizeText(g->screen.font, t, &g->screen.objects[g->screen.object_count]->rect.w, &g->screen.objects[g->screen.object_count]->rect.h);
+    g->screen.objects[g->screen.object_count]->x_frames = 1;
+    g->screen.objects[g->screen.object_count]->y_frames = 1;
+    g->screen.objects[g->screen.object_count]->animation_rect.x = 0;
+    g->screen.objects[g->screen.object_count]->animation_rect.y = 0;
+    TTF_SizeText(g->screen.font, t, &g->screen.objects[g->screen.object_count]->animation_rect.w, &g->screen.objects[g->screen.object_count]->animation_rect.h);
     g->screen.objects[g->screen.object_count]->z_index = z;
-    strcpy(g->screen.objects[g->screen.object_count]->text, t);
-    g->screen.objects[g->screen.object_count]->response_trigger = rf;
+    g->screen.objects[g->screen.object_count]->text_str = malloc(sizeof(char) * TEXT_BUFFER_CAP);
+    strcpy(g->screen.objects[g->screen.object_count]->text_str, t);
+    g->screen.objects[g->screen.object_count]->object_type_flags = rf;
     g->screen.objects[g->screen.object_count]->func = func;
 
     g->screen.objects[g->screen.object_count]->color = white;
@@ -683,20 +636,20 @@ struct visual *game_add_text(struct game *g, struct application *a, int x, int y
 
     return g->screen.objects[g->screen.object_count - 1];
 }
-void game_change_text(struct game *g, struct application *a, struct visual *v, char updated_text[TEXT_BUFFER_CAP])
+void game_change_text(struct game *g, struct application *a, struct visual *v, char *updated_text)
 {
-    if (strcmp(v->text, "") == 0)
+    if (strcmp(v->text_str, "") == 0)
     {
-        printf("Error object at location %p is not a text object\n", v);
+        printf("Error object at location %p is not a text_str object\n", v);
     }
-    const char *t1 = v->text;
+    const char *t1 = v->text_str;
     const char *t2 = updated_text;
     if (strcmp(t1, t2) == 0)
         return;
-    strcpy(v->text, updated_text);
+    strcpy(v->text_str, updated_text);
 
     SDL_Color white = {255, 255, 255, 255};
-    SDL_Surface *surfaceMessage = TTF_RenderText_Solid(g->screen.font, v->text, white);
+    SDL_Surface *surfaceMessage = TTF_RenderText_Solid(g->screen.font, v->text_str, white);
     if (!surfaceMessage)
     {
         printf("Error TTF_RenderText_Solid() failure\n");
@@ -709,8 +662,12 @@ void game_change_text(struct game *g, struct application *a, struct visual *v, c
         printf("Error SDL_CreateTextureFromSurface() failure\n");
         return;
     }
+    v->animation_rect.x = 0;
+    v->animation_rect.y = 0;
+    TTF_SizeText(g->screen.font, v->text_str,
+                 &v->animation_rect.w, &v->animation_rect.h);
 
-    TTF_SizeText(g->screen.font, v->text, &v->rect.w, &v->rect.h);
+    TTF_SizeText(g->screen.font, v->text_str, &v->rect.w, &v->rect.h);
     SDL_SetTextureColorMod(v->pTexture->texture, v->pTexture->color.r, v->pTexture->color.g, v->pTexture->color.b);
     SDL_SetTextureAlphaMod(v->pTexture->texture, v->pTexture->color.a);
 }
@@ -773,9 +730,6 @@ void game_draw(struct game *g, struct application *a)
 
         if (colors_different(g->screen.objects[i]->color, g->screen.objects[i]->pTexture->color))
         {
-            if (strcmp(g->screen.objects[i]->text, "") != 0)
-                printf("huh %f\n", g->game_time);
-
             SDL_Color clr1 = g->screen.objects[i]->color;
             SDL_Color clr2 = g->screen.objects[i]->pTexture->color;
             texture_set_color(g->screen.objects[i]->pTexture->texture, g->screen.objects[i]->color);
@@ -792,11 +746,12 @@ void game_draw(struct game *g, struct application *a)
         temp_rect.w *= g->window_x_scale;
         temp_rect.y *= g->window_y_scale;
         temp_rect.h *= g->window_y_scale;
-        SDL_RenderCopy(a->renderer, g->screen.objects[i]->pTexture->texture, NULL, &temp_rect);
+
+        SDL_RenderCopy(a->renderer, g->screen.objects[i]->pTexture->texture, &g->screen.objects[i]->animation_rect, &temp_rect);
     }
 }
 
-int comp_visual_z(const void *a, const void *b) // maybe needs to be void*
+int comp_visual_z(const void *a, const void *b)
 {
     struct visual **pObjA = (struct visual **)a;
     struct visual **pObjB = (struct visual **)b;
@@ -996,55 +951,86 @@ bool mouse_collision(struct game *g, struct visual *v)
         return false;
     return true;
 }
+bool visual_collision(struct visual *vA, struct visual *vB)
+{
+    double t;
+    if ((t == vA->rect.x - vB->rect.x) > vB->rect.w || -t > vA->rect.w)
+        return false;
+    if ((t == vA->rect.y - vB->rect.y) > vB->rect.h || -t > vA->rect.h)
+        return false;
+    return true;
+}
+
 void handle_visual_responses(struct game *g, struct application *a, struct visual *v)
 {
     visual_update_special(v);
     visual_set_special(v, 0, 0, 0, 0);
 
-    switch (v->response_trigger)
+    if (OBJECT_TYPE_BUTTON & v->object_type_flags)
     {
-    case OBJECT_TYPE_BUTTON:
-        if (!mouse_collision(g, v))
-            break;
-
-        visual_set_special_size(v, v->rect.w * 0.25, v->rect.h * 0.25);
-        if (g->mousePressed)
+        if (mouse_collision(g, v))
         {
-            visual_set_special_size(v, v->rect.w * -0.25, v->rect.h * -0.25);
+            visual_set_special_size(v, v->rect.w * 0.25, v->rect.h * 0.25);
+            if (g->mousePressed)
+            {
+                visual_set_special_size(v, v->rect.w * -0.25, v->rect.h * -0.25);
+            }
+            if (g->mouseClicked)
+            {
+                visual_set_special_size(v, v->rect.w * 2, v->rect.h * 2);
+                if (v->func != NULL)
+                {
+                    v->func(g, a, v->func_pRef);
+                }
+            }
         }
-        if (g->mouseClicked)
+    }
+    if (OBJECT_TYPE_GENERIC_2D_PLAYER & v->object_type_flags)
+    {
+        if (game_input_held(g, INPUT_DOWN))
         {
-            visual_set_special_size(v, v->rect.w * 2, v->rect.h * 2);
+            v->rect.y += 10.0;
             if (v->func != NULL)
             {
                 v->func(g, a, v->func_pRef);
             }
         }
-        break;
-    case OBJECT_TYPE_GENERIC_2D_PLAYER:
-        if (game_input_held(g, INPUT_DOWN))
-        {
-            v->rect.y += 10.0;
-        }
         if (game_input_held(g, INPUT_RIGHT))
         {
             v->rect.x += 10.0;
+            if (v->func != NULL)
+            {
+                v->func(g, a, v->func_pRef);
+            }
         }
         if (game_input_held(g, INPUT_UP))
         {
             v->rect.y -= 10.0;
+            if (v->func != NULL)
+            {
+                v->func(g, a, v->func_pRef);
+            }
         }
         if (game_input_held(g, INPUT_LEFT))
         {
             v->rect.x -= 10.0;
+            if (v->func != NULL)
+            {
+                v->func(g, a, v->func_pRef);
+            }
         }
-        break;
-    default:
-        break;
+    }
+    if (OBJECT_TYPE_COLLISION & v->object_type_flags)
+    {
+        if (v->func != NULL && visual_collision(v, (struct visual *)v->func_pRef))
+        {
+            v->func(g, a, v->func_pRef); // maybe not how this should be
+        }
     }
 }
 void logic_loop(struct game *g, struct application *a)
 {
+    g->input_action_just_changed = INPUT_NONE;
     for (int i = 0; i < g->screen.object_count; ++i)
     {
         handle_visual_responses(g, a, g->screen.objects[i]);
@@ -1101,6 +1087,47 @@ void event_loop(struct game *g)
             break;
         }
     }
+}
+
+void load_file_data(const char *path, void *data, size_t data_unit_size, unsigned int data_location)
+{
+    FILE *inputFile;
+
+    inputFile = fopen(path, "rb");
+    if (!inputFile)
+    {
+        printf("Error failed to open file %s for input\n", path);
+        return;
+    }
+
+    fseek(inputFile, data_location * data_unit_size, SEEK_SET);
+    int success = fread(data, data_unit_size, 1, inputFile);
+    if (!success)
+    {
+        printf("Error failed to read from file %s\n", path);
+        return;
+    }
+
+    fclose(inputFile);
+}
+void save_file_data(const char *path, void *data, size_t data_unit_size, unsigned int data_count)
+{
+    FILE *outputFile;
+    outputFile = fopen(path, "wb");
+    if (!outputFile)
+    {
+        printf("Error failed to open file %s for output\n", path);
+        return;
+    }
+
+    int success = fwrite(data, data_unit_size, data_count, outputFile);
+    if (!success)
+    {
+        printf("Error writing to file %s\n", path);
+        return;
+    }
+
+    fclose(outputFile);
 }
 
 #endif
