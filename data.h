@@ -3,7 +3,6 @@
 
 #include "functions.h"
 
-// generic functions (at some point please move all these to their own header file called functions.h or something to avoid bloat in the main game data header xoxoxo)
 void set_level_1(void *g, void *a, void *pr);
 void set_level_menu(void *g, void *a, void *pr);
 
