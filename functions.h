@@ -7,7 +7,6 @@ void level_start_timer(void *g, void *a, void *pr);
 void level_timer_unlink(void *g, void *a, void *pr);
 void level_destroy_object(void *g, void *a, void *pr);
 void level_change_input(void *g, void *a, void *pr);
-void save_input_data(void *g, void *a, void *pr);
 
 void set_fullscreen(void *g, void *a, void *pr);
 void set_windowed(void *g, void *a, void *pr);

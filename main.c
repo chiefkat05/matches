@@ -12,7 +12,7 @@ void main_loop()
     if (!main_initiated)
     {
         game_init(&g, &app);
-        game_build_level(&g, &app, level_menu);
+        game_build_level(&g, &app, level_default);
         main_initiated = true;
     }
     game_loop(&g, &app);
@@ -27,7 +27,7 @@ int main()
 #ifndef __EMSCRIPTEN__
     game_init(&g, &app);
 
-    game_build_level(&g, &app, level_menu);
+    game_build_level(&g, &app, level_default);
     while (game_loop(&g, &app))
     {
     }
