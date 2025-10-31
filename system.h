@@ -3,6 +3,7 @@
 
 #include "definitions.h"
 
+// VISUAL ANIMATION
 void v_animation_init(struct visual_animation *va, struct visual *v)
 {
     va->pVisual = v;
@@ -64,6 +65,7 @@ void v_animation_play(struct visual_animation *va)
     va->running = true;
 }
 
+// INPUT
 bool input_held(struct input_action_data *data)
 {
     return data->held;
@@ -77,6 +79,7 @@ bool input_just_released(struct input_action_data *data)
     return data->just_released;
 }
 
+// TIMER
 void timer_start(struct timer *t, void *g, void *a)
 {
     if (t->running)
@@ -109,7 +112,6 @@ void timer_update(struct timer *t, void *g, void *a)
         t->current_time -= t->speed;
     }
 
-    // timer finished chedck for normal timer direction
     if (t->timer_direction == -1)
     {
         if (t->current_time < t->end_time || t->current_time == t->end_time)
@@ -151,6 +153,7 @@ void timer_update(struct timer *t, void *g, void *a)
         *t->pLinkInt8 = (uint8_t)t->current_time;
 }
 
+// VISUAL
 void visual_copy(struct visual *src, struct visual *dest)
 {
     dest->rect = src->rect;
@@ -257,7 +260,56 @@ void visual_destroy(struct visual *v)
     }
     v->pTexture = NULL;
 }
+void visual_set_frames(struct visual *v, unsigned int xf, unsigned int yf)
+{
+    v->x_frames = xf;
+    v->y_frames = yf;
 
+    SDL_QueryTexture(v->pTexture->texture, NULL, NULL,
+                     &v->animation_rect.w, &v->animation_rect.h);
+    v->animation_rect.w /= v->x_frames;
+    v->animation_rect.h /= v->y_frames;
+}
+
+// TEXTURE
+void texture_set_color(SDL_Texture *t, SDL_Color clr)
+{
+    SDL_SetTextureColorMod(t, clr.r, clr.g, clr.b);
+    SDL_SetTextureAlphaMod(t, clr.a);
+}
+struct colored_texture *game_add_texture(struct game *g, struct application *a, const char *path)
+{
+    if (g->screen.texture_count >= TEXTURE_CAP)
+    {
+        printf("Error too many textures\n");
+        return NULL;
+    }
+    SDL_Surface *surf = IMG_Load(path);
+    if (!surf)
+    {
+        printf("Error IMG_Load() failure %s\n", IMG_GetError());
+        return NULL;
+    }
+    g->screen.clr_textures[g->screen.texture_count].texture = SDL_CreateTextureFromSurface(a->renderer, surf);
+    if (!g->screen.clr_textures[g->screen.texture_count].texture)
+    {
+        printf("Error SDL_CreateTextureFromSurface() failure %s\n", SDL_GetError());
+        return NULL;
+    }
+    SDL_FreeSurface(surf);
+
+    ++g->screen.texture_count;
+
+    return &g->screen.clr_textures[g->screen.texture_count - 1];
+}
+bool colors_different(SDL_Color clr1, SDL_Color clr2)
+{
+    if (clr1.r != clr2.r || clr1.g != clr2.g || clr1.b != clr2.b || clr1.a != clr2.a)
+        return true;
+    return false;
+}
+
+// GAME
 void game_init_input(struct game *g)
 {
     for (int i = 0; i < input_action_type_limit; ++i)
@@ -403,6 +455,8 @@ const char *game_get_input_code_name(struct game *g, enum input_action_type acti
     {
         // return SDL_GetKeyName(SDL_GetKeyFromScancode(g->input_actions[action].scancodes[code_index]));
         // oh boy
+        // finish these strings
+        return "JOYSTICK_INPUT";
     }
     return "";
 }
@@ -442,13 +496,6 @@ void game_add_joystick_input(struct game *g, int joystick, enum joystick_input_c
     g->joystick_input_changed_this_frame[g->joystick_input_count].joystick_id = joystick;
     ++g->joystick_input_count;
 }
-
-void texture_set_color(SDL_Texture *t, SDL_Color clr)
-{
-    SDL_SetTextureColorMod(t, clr.r, clr.g, clr.b);
-    SDL_SetTextureAlphaMod(t, clr.a);
-}
-
 struct timer *game_add_timer(struct game *g, double start_time, double end_time, double speed, bool restart_on_end)
 {
     if (g->timer_count >= TIMER_OBJECT_CAP)
@@ -499,32 +546,6 @@ void game_timer_set_start_func(struct game *g, struct timer *t, void (*func)(voi
         t->start_func_pRef = func_pr;
     if (func_pr == NULL)
         t->start_func_pRef = t;
-}
-
-struct colored_texture *game_add_texture(struct game *g, struct application *a, const char *path)
-{
-    if (g->screen.texture_count >= TEXTURE_CAP)
-    {
-        printf("Error too many textures\n");
-        return NULL;
-    }
-    SDL_Surface *surf = IMG_Load(path);
-    if (!surf)
-    {
-        printf("Error IMG_Load() failure %s\n", IMG_GetError());
-        return NULL;
-    }
-    g->screen.clr_textures[g->screen.texture_count].texture = SDL_CreateTextureFromSurface(a->renderer, surf);
-    if (!g->screen.clr_textures[g->screen.texture_count].texture)
-    {
-        printf("Error SDL_CreateTextureFromSurface() failure %s\n", SDL_GetError());
-        return NULL;
-    }
-    SDL_FreeSurface(surf);
-
-    ++g->screen.texture_count;
-
-    return &g->screen.clr_textures[g->screen.texture_count - 1];
 }
 struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, int z, struct colored_texture *tex,
                                int rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
@@ -577,16 +598,6 @@ struct visual *game_add_visual(struct game *g, int x, int y, int w, int h, int z
 
     return g->screen.objects[g->screen.object_count - 1];
 }
-void visual_set_frames(struct visual *v, unsigned int xf, unsigned int yf)
-{
-    v->x_frames = xf;
-    v->y_frames = yf;
-
-    SDL_QueryTexture(v->pTexture->texture, NULL, NULL,
-                     &v->animation_rect.w, &v->animation_rect.h);
-    v->animation_rect.w /= v->x_frames;
-    v->animation_rect.h /= v->y_frames;
-}
 void game_destroy_visual(struct game *g, struct visual *v)
 {
     bool found = false;
@@ -615,6 +626,14 @@ void game_load_font(struct game *g, struct application *a, const char *path, uns
         printf("Error TTF_OpenFont failure() %s\n", TTF_GetError());
         return;
     }
+}
+void game_set_master_volume(struct game *g, int volume)
+{
+    Mix_MasterVolume(volume);
+}
+void game_set_music_volume(struct game *g, int volume)
+{
+    Mix_VolumeMusic(volume);
 }
 struct visual *game_add_text(struct game *g, struct application *a, int x, int y, int z, char *t,
                              int rf, void (*func)(void *game, void *app, void *pRef), void *func_pr)
@@ -716,7 +735,6 @@ void game_change_text(struct game *g, struct application *a, struct visual *v, c
     SDL_SetTextureColorMod(v->pTexture->texture, v->pTexture->color.r, v->pTexture->color.g, v->pTexture->color.b);
     SDL_SetTextureAlphaMod(v->pTexture->texture, v->pTexture->color.a);
 }
-
 void game_set_music(struct game *g, const char *path)
 {
     g->audio.music = Mix_LoadMUS(path);
@@ -759,13 +777,6 @@ void game_set_level_loop_func(struct game *g, void (*func)(struct game *g, struc
 {
     g->level_loop_func = func;
 }
-
-bool colors_different(SDL_Color clr1, SDL_Color clr2)
-{
-    if (clr1.r != clr2.r || clr1.g != clr2.g || clr1.b != clr2.b || clr1.a != clr2.a)
-        return true;
-    return false;
-}
 void game_draw(struct game *g, struct application *a)
 {
     for (int i = 0; i < g->screen.object_count; ++i)
@@ -795,7 +806,6 @@ void game_draw(struct game *g, struct application *a)
         SDL_RenderCopy(a->renderer, g->screen.objects[i]->pTexture->texture, &g->screen.objects[i]->animation_rect, &temp_rect);
     }
 }
-
 int comp_visual_z(const void *a, const void *b)
 {
     struct visual **pObjA = (struct visual **)a;
@@ -944,7 +954,6 @@ void game_change_level(struct game *g, struct application *a, void (*func)(struc
     game_destroy_level(g, a);
     game_build_level(g, a, func);
 }
-
 void game_exit(struct game *g, struct application *a)
 {
     game_destroy_level(g, a);
@@ -1090,19 +1099,24 @@ void logic_loop(struct game *g, struct application *a)
     game_update_input(g);
     game_update_input_change(g);
 }
-
 void draw_loop(struct game *g, struct application *a)
 {
     game_draw(g, a);
 
     SDL_RenderPresent(a->renderer);
 }
+
+// DISASTER
 void joystick_clean_hat(struct game *g, int joystick_id, int hat_id)
 {
     for (int i = 0; i < JOYSTICK_HAT_VALUE_TYPE_COUNT; ++i)
     {
         g->joystick_input_map[(joystick_id + 1) * ((JOYSTICK_HAT_0_NORTH + i) + (JOYSTICK_HAT_VALUE_TYPE_COUNT * hat_id))] = false;
     }
+}
+void game_set_joystick_axis_deadzone(struct game *g, int joystick_id, int deadzone)
+{
+    g->joysticks[joystick_id].joystick_axis_deadzone = deadzone;
 }
 void event_loop(struct game *g)
 {
@@ -1146,19 +1160,20 @@ void event_loop(struct game *g)
             {
                 g->joysticks[event.jdevice.which].joystick_axis_values[i] = SDL_JoystickGetAxis(g->joysticks[event.jdevice.which].joystick, i);
             }
+            g->joysticks[event.jdevice.which].joystick_axis_deadzone = JOYSTICK_DEFAULT_AXIS_DEADZONE;
             break;
         case SDL_JOYDEVICEREMOVED:
             SDL_JoystickClose(g->joysticks[event.jdevice.which].joystick);
             break;
         case SDL_JOYAXISMOTION:
-            if (event.jaxis.value < g->joysticks[event.jaxis.which].joystick_axis_values[event.jaxis.axis] - JOYSTICK_AXIS_DEADZONE)
+            if (event.jaxis.value < g->joysticks[event.jaxis.which].joystick_axis_values[event.jaxis.axis] - g->joysticks[event.jaxis.which].joystick_axis_deadzone)
             {
                 game_add_joystick_input(g, (event.jaxis.which + 1), JOYSTICK_AXIS_0_MIN + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis));
                 g->joystick_input_map[(event.jaxis.which + 1) * (JOYSTICK_AXIS_0_MIN + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis))] = true;
                 g->joystick_input_map[(event.jaxis.which + 1) * (JOYSTICK_AXIS_0_MAX + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis))] = false;
                 break;
             }
-            if (event.jaxis.value > g->joysticks[event.jaxis.which].joystick_axis_values[event.jaxis.axis] + JOYSTICK_AXIS_DEADZONE)
+            if (event.jaxis.value > g->joysticks[event.jaxis.which].joystick_axis_values[event.jaxis.axis] + g->joysticks[event.jaxis.which].joystick_axis_deadzone)
             {
                 game_add_joystick_input(g, (event.jaxis.which + 1), JOYSTICK_AXIS_0_MAX + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis));
                 g->joystick_input_map[(event.jaxis.which + 1) * (JOYSTICK_AXIS_0_MIN + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis))] = false;
@@ -1243,6 +1258,7 @@ void event_loop(struct game *g)
     }
 }
 
+// SAVING
 void load_file_data(const char *path, void *data, size_t data_unit_size, unsigned int data_location)
 {
     FILE *inputFile;

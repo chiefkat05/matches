@@ -11,6 +11,7 @@
         "sdl_ttf.h": "c",
         "emscripten.h": "c",
         "sdl_net.h": "c",
-        "random": "c"
+        "random": "c",
+        "definitions.h": "c"
     }
 }

@@ -44,8 +44,8 @@
 #define JOYSTICK_HAT_LIMIT 4
 #define JOYSTICK_BALL_LIMIT 0 // maybe some day
 #define JOYSTICK_BUTTON_LIMIT 16
-#define JOYSTICK_AXIS_DEADZONE 3200 // make this configurable!!!
-// also please if possible make the joystick input just a little less convoluted
+#define JOYSTICK_DEFAULT_AXIS_DEADZONE 3200
+// please if possible make the joystick input just a little less convoluted
 
 enum object_special_type
 {
@@ -137,6 +137,7 @@ struct joystick_default_map
 {
     SDL_Joystick *joystick;
     int joystick_axis_values[JOYSTICK_AXIS_LIMIT];
+    int joystick_axis_deadzone;
 };
 struct input_scancode
 {
