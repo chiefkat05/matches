@@ -266,29 +266,36 @@ void game_init_input(struct game *g)
         g->input_actions[i].just_pressed = false;
         g->input_actions[i].just_released = false;
         g->input_actions[i].type = (enum input_action_type)i;
-        for (int j = 0; j < INPUT_VALID_SCANCODE_LIMIT; ++j)
+        for (int j = 0; j < INPUT_BUFFER_LIMIT; ++j)
         {
-            g->input_actions[i].valid_scancodes[j] = 0;
+            g->input_actions[i].scancodes[j].code = 0;
+            g->input_actions[i].scancodes[j].type = INPUT_KEYBOARD;
         }
     }
-    g->input_action_being_changed = INPUT_NONE;
+    for (int i = 0; i < joystick_input_limit; ++i)
+    {
+        g->joystick_input_map[i] = false;
+    }
+    g->input_action_being_changed = INPUT_ACTION_NONE;
 }
-void game_add_input_key(struct game *g, enum input_action_type action, uint8_t key)
+void game_add_input(struct game *g, enum input_action_type action, enum input_type type, uint8_t code)
 {
-    if (g->input_actions[action].scancode_count >= INPUT_VALID_SCANCODE_LIMIT)
+    if (g->input_actions[action].scancode_count >= INPUT_BUFFER_LIMIT)
     {
         printf("Error too many keycodes on input action %i\n", action);
         return;
     }
 
-    g->input_actions[action].valid_scancodes[g->input_actions[action].scancode_count] = key;
+    g->input_actions[action].scancodes[g->input_actions[action].scancode_count].code = code;
+    g->input_actions[action].scancodes[g->input_actions[action].scancode_count].type = type;
     ++g->input_actions[action].scancode_count;
 }
-void game_reset_input_keys(struct game *g, enum input_action_type action)
+void game_reset_input(struct game *g, enum input_action_type action)
 {
     for (int i = 0; i < g->input_actions[action].scancode_count; ++i)
     {
-        g->input_actions[action].valid_scancodes[i] = 0;
+        g->input_actions[action].scancodes[i].code = 0;
+        g->input_actions[action].scancodes[i].type = INPUT_KEYBOARD;
     }
     g->input_actions[action].scancode_count = 0;
 }
@@ -302,9 +309,11 @@ void game_update_input(struct game *g)
 
         g->input_actions[i].just_pressed = false;
         g->input_actions[i].just_released = false;
-        for (int j = 0; j < INPUT_VALID_SCANCODE_LIMIT; ++j)
+        for (int j = 0; j < INPUT_BUFFER_LIMIT; ++j)
         {
-            if (keyboard_state[g->input_actions[i].valid_scancodes[j]])
+            if (g->input_actions[i].scancodes[j].type == INPUT_KEYBOARD && keyboard_state[g->input_actions[i].scancodes[j].code])
+                anypressed = true;
+            if (g->input_actions[i].scancodes[j].type == INPUT_JOYSTICK && g->joystick_input_map[g->input_actions[i].scancodes[j].code])
                 anypressed = true;
         }
 
@@ -326,7 +335,7 @@ void game_update_input(struct game *g)
 }
 void game_update_input_change(struct game *g)
 {
-    if (g->input_action_being_changed == INPUT_NONE)
+    if (g->input_action_being_changed == INPUT_ACTION_NONE)
         return;
 
     int keycount;
@@ -336,18 +345,26 @@ void game_update_input_change(struct game *g)
     {
         if (i == SDL_SCANCODE_ESCAPE && map[i])
         {
-            game_reset_input_keys(g, g->input_action_being_changed);
+            game_reset_input(g, g->input_action_being_changed);
             g->input_action_just_changed = g->input_action_being_changed;
-            g->input_action_being_changed = INPUT_NONE;
+            g->input_action_being_changed = INPUT_ACTION_NONE;
             return;
         }
         if (map[i])
         {
-            game_add_input_key(g, g->input_action_being_changed, i);
+            game_add_input(g, g->input_action_being_changed, INPUT_KEYBOARD, i);
             g->input_action_just_changed = g->input_action_being_changed;
-            g->input_action_being_changed = INPUT_NONE;
+            g->input_action_being_changed = INPUT_ACTION_NONE;
             return;
         }
+    }
+
+    if (g->joystick_input_changed_this_frame[0].code != -1)
+    {
+        game_add_input(g, g->input_action_being_changed, INPUT_JOYSTICK, g->joystick_input_changed_this_frame[0].code * g->joystick_input_changed_this_frame[0].joystick_id);
+        g->input_action_just_changed = g->input_action_being_changed;
+        g->input_action_being_changed = INPUT_ACTION_NONE;
+        return;
     }
 }
 void game_do_on_input_change(struct game *g, struct application *a, void *func_pr, enum input_action_type action, void (*func)(void *g, void *a, void *pr))
@@ -376,17 +393,25 @@ bool game_input_just_released(struct game *g, enum input_action_type action)
 {
     return input_just_released(&g->input_actions[action]);
 }
-const char *game_get_key_name(struct game *g, enum input_action_type action, unsigned int key_index)
+const char *game_get_input_code_name(struct game *g, enum input_action_type action, unsigned int code_index)
 {
-    SDL_Keycode key = SDL_GetKeyFromScancode(g->input_actions[action].valid_scancodes[key_index]);
-    return SDL_GetKeyName(key);
+    if (g->input_actions[action].scancodes[code_index].type == INPUT_KEYBOARD)
+    {
+        return SDL_GetKeyName(SDL_GetKeyFromScancode(g->input_actions[action].scancodes[code_index].code));
+    }
+    if (g->input_actions[action].scancodes[code_index].type == INPUT_JOYSTICK)
+    {
+        // return SDL_GetKeyName(SDL_GetKeyFromScancode(g->input_actions[action].scancodes[code_index]));
+        // oh boy
+    }
+    return "";
 }
 char *game_get_action_key_names_list(struct game *g, enum input_action_type action)
 {
     char key_name_list[TEXT_BUFFER_CAP] = "";
     for (int i = 0; i < g->input_actions[action].scancode_count; ++i)
     {
-        const char *key_name = game_get_key_name(g, action, i);
+        const char *key_name = game_get_input_code_name(g, action, i);
         strcat(key_name_list, key_name);
 
         if (i < g->input_actions[action].scancode_count - 1)
@@ -396,6 +421,26 @@ char *game_get_action_key_names_list(struct game *g, enum input_action_type acti
     strcpy(output, key_name_list);
 
     return output;
+}
+void game_flush_joystick_input_list(struct game *g)
+{
+    for (int i = 0; i < INPUT_BUFFER_LIMIT; ++i)
+    {
+        g->joystick_input_changed_this_frame[i].code = -1;
+        g->joystick_input_changed_this_frame[g->joystick_input_count].joystick_id = -1;
+    }
+    g->joystick_input_count = 0;
+}
+void game_add_joystick_input(struct game *g, int joystick, enum joystick_input_code code)
+{
+    if (g->joystick_input_count >= INPUT_BUFFER_LIMIT)
+    {
+        return;
+    }
+
+    g->joystick_input_changed_this_frame[g->joystick_input_count].code = code;
+    g->joystick_input_changed_this_frame[g->joystick_input_count].joystick_id = joystick;
+    ++g->joystick_input_count;
 }
 
 void texture_set_color(SDL_Texture *t, SDL_Color clr)
@@ -768,11 +813,12 @@ void game_organize_draw_objects(struct game *g)
 
 void game_init(struct game *g, struct application *a)
 {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0)
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0)
     {
         printf("Error SDL_Init() failure %s\n", SDL_GetError());
         return;
     }
+    SDL_JoystickEventState(SDL_ENABLE);
 
     a->window = SDL_CreateWindow("Content", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_RESIZABLE);
     g->window_x_scale = 1.0;
@@ -987,7 +1033,7 @@ void handle_visual_responses(struct game *g, struct application *a, struct visua
     }
     if (OBJECT_TYPE_GENERIC_2D_PLAYER & v->object_type_flags)
     {
-        if (game_input_held(g, INPUT_DOWN))
+        if (game_input_held(g, INPUT_ACTION_DOWN))
         {
             v->rect.y += 10.0;
             if (v->func != NULL)
@@ -995,7 +1041,7 @@ void handle_visual_responses(struct game *g, struct application *a, struct visua
                 v->func(g, a, v->func_pRef);
             }
         }
-        if (game_input_held(g, INPUT_RIGHT))
+        if (game_input_held(g, INPUT_ACTION_RIGHT))
         {
             v->rect.x += 10.0;
             if (v->func != NULL)
@@ -1003,7 +1049,7 @@ void handle_visual_responses(struct game *g, struct application *a, struct visua
                 v->func(g, a, v->func_pRef);
             }
         }
-        if (game_input_held(g, INPUT_UP))
+        if (game_input_held(g, INPUT_ACTION_UP))
         {
             v->rect.y -= 10.0;
             if (v->func != NULL)
@@ -1011,7 +1057,7 @@ void handle_visual_responses(struct game *g, struct application *a, struct visua
                 v->func(g, a, v->func_pRef);
             }
         }
-        if (game_input_held(g, INPUT_LEFT))
+        if (game_input_held(g, INPUT_ACTION_LEFT))
         {
             v->rect.x -= 10.0;
             if (v->func != NULL)
@@ -1030,7 +1076,7 @@ void handle_visual_responses(struct game *g, struct application *a, struct visua
 }
 void logic_loop(struct game *g, struct application *a)
 {
-    g->input_action_just_changed = INPUT_NONE;
+    g->input_action_just_changed = INPUT_ACTION_NONE;
     for (int i = 0; i < g->screen.object_count; ++i)
     {
         handle_visual_responses(g, a, g->screen.objects[i]);
@@ -1051,8 +1097,16 @@ void draw_loop(struct game *g, struct application *a)
 
     SDL_RenderPresent(a->renderer);
 }
+void joystick_clean_hat(struct game *g, int joystick_id, int hat_id)
+{
+    for (int i = 0; i < JOYSTICK_HAT_VALUE_TYPE_COUNT; ++i)
+    {
+        g->joystick_input_map[(joystick_id + 1) * ((JOYSTICK_HAT_0_NORTH + i) + (JOYSTICK_HAT_VALUE_TYPE_COUNT * hat_id))] = false;
+    }
+}
 void event_loop(struct game *g)
 {
+    game_flush_joystick_input_list(g);
     g->mouseClicked = false;
 
     SDL_Event event;
@@ -1082,6 +1136,106 @@ void event_loop(struct game *g)
                 g->window_x_scale = ((double)event.window.data1 / (double)WINDOW_WIDTH);
                 g->window_y_scale = ((double)event.window.data2 / (double)WINDOW_HEIGHT);
             }
+            break;
+        case SDL_JOYDEVICEADDED:
+            if (event.jdevice.which >= JOYSTICK_DEVICE_LIMIT)
+                break;
+
+            g->joysticks[event.jdevice.which].joystick = SDL_JoystickOpen(event.jdevice.which);
+            for (int i = 0; i < JOYSTICK_AXIS_LIMIT; ++i)
+            {
+                g->joysticks[event.jdevice.which].joystick_axis_values[i] = SDL_JoystickGetAxis(g->joysticks[event.jdevice.which].joystick, i);
+            }
+            break;
+        case SDL_JOYDEVICEREMOVED:
+            SDL_JoystickClose(g->joysticks[event.jdevice.which].joystick);
+            break;
+        case SDL_JOYAXISMOTION:
+            if (event.jaxis.value < g->joysticks[event.jaxis.which].joystick_axis_values[event.jaxis.axis] - JOYSTICK_AXIS_DEADZONE)
+            {
+                game_add_joystick_input(g, (event.jaxis.which + 1), JOYSTICK_AXIS_0_MIN + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis));
+                g->joystick_input_map[(event.jaxis.which + 1) * (JOYSTICK_AXIS_0_MIN + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis))] = true;
+                g->joystick_input_map[(event.jaxis.which + 1) * (JOYSTICK_AXIS_0_MAX + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis))] = false;
+                break;
+            }
+            if (event.jaxis.value > g->joysticks[event.jaxis.which].joystick_axis_values[event.jaxis.axis] + JOYSTICK_AXIS_DEADZONE)
+            {
+                game_add_joystick_input(g, (event.jaxis.which + 1), JOYSTICK_AXIS_0_MAX + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis));
+                g->joystick_input_map[(event.jaxis.which + 1) * (JOYSTICK_AXIS_0_MIN + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis))] = false;
+                g->joystick_input_map[(event.jaxis.which + 1) * (JOYSTICK_AXIS_0_MAX + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis))] = true;
+                break;
+            }
+            g->joystick_input_map[(event.jaxis.which + 1) * (JOYSTICK_AXIS_0_MIN + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis))] = false;
+            g->joystick_input_map[(event.jaxis.which + 1) * (JOYSTICK_AXIS_0_MAX + (JOYSTICK_AXIS_VALUE_TYPE_COUNT * event.jaxis.axis))] = false;
+            break;
+        case SDL_JOYHATMOTION:
+            if (event.jhat.value == SDL_HAT_CENTERED)
+            {
+                joystick_clean_hat(g, event.jhat.which, event.jhat.hat);
+            }
+            if (event.jhat.value == SDL_HAT_LEFTUP)
+            {
+                joystick_clean_hat(g, event.jhat.which, event.jhat.hat);
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_NORTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_NORTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_WEST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_WEST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+            }
+            if (event.jhat.value == SDL_HAT_UP)
+            {
+                joystick_clean_hat(g, event.jhat.which, event.jhat.hat);
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_NORTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_NORTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+            }
+            if (event.jhat.value == SDL_HAT_RIGHTUP)
+            {
+                joystick_clean_hat(g, event.jhat.which, event.jhat.hat);
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_NORTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_NORTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_EAST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_EAST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+            }
+            if (event.jhat.value == SDL_HAT_RIGHT)
+            {
+                joystick_clean_hat(g, event.jhat.which, event.jhat.hat);
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_EAST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_EAST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+            }
+            if (event.jhat.value == SDL_HAT_RIGHTDOWN)
+            {
+                joystick_clean_hat(g, event.jhat.which, event.jhat.hat);
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_SOUTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_SOUTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_EAST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_EAST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+            }
+            if (event.jhat.value == SDL_HAT_DOWN)
+            {
+                joystick_clean_hat(g, event.jhat.which, event.jhat.hat);
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_SOUTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_SOUTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+            }
+            if (event.jhat.value == SDL_HAT_LEFTDOWN)
+            {
+                joystick_clean_hat(g, event.jhat.which, event.jhat.hat);
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_SOUTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_SOUTH + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_WEST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_WEST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+            }
+            if (event.jhat.value == SDL_HAT_LEFT)
+            {
+                joystick_clean_hat(g, event.jhat.which, event.jhat.hat);
+                g->joystick_input_map[(event.jhat.which + 1) * (JOYSTICK_HAT_0_WEST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat))] = true;
+                game_add_joystick_input(g, (event.jhat.which + 1), JOYSTICK_HAT_0_WEST + (JOYSTICK_HAT_VALUE_TYPE_COUNT * event.jhat.hat));
+            }
+            break;
+        case SDL_JOYBUTTONDOWN:
+            g->joystick_input_map[(event.jbutton.which + 1) * (JOYSTICK_BUTTON_0 + event.jbutton.button)] = true;
+            game_add_joystick_input(g, (event.jbutton.which + 1), JOYSTICK_BUTTON_0 + event.jbutton.button);
+            break;
+        case SDL_JOYBUTTONUP:
+            g->joystick_input_map[(event.jbutton.which + 1) * (JOYSTICK_BUTTON_0 + event.jbutton.button)] = false;
             break;
         default:
             break;

@@ -33,10 +33,19 @@
 #define TEXT_BUFFER_CAP 128
 #define TIMER_OBJECT_CAP 128
 
-#define INPUT_VALID_SCANCODE_LIMIT 8
+#define INPUT_BUFFER_LIMIT 8
 
 #define VISUAL_ANIMATION_FRAME_LIMIT 32
 #define VISUAL_ANIMATION_SPEED 1.0
+
+#define JOYSTICK_DEVICE_LIMIT 8
+#define JOYSTICK_INPUT_CODE_LIMIT 16
+#define JOYSTICK_AXIS_LIMIT 8
+#define JOYSTICK_HAT_LIMIT 4
+#define JOYSTICK_BALL_LIMIT 0 // maybe some day
+#define JOYSTICK_BUTTON_LIMIT 16
+#define JOYSTICK_AXIS_DEADZONE 3200 // make this configurable!!!
+// also please if possible make the joystick input just a little less convoluted
 
 enum object_special_type
 {
@@ -48,18 +57,96 @@ enum object_special_type
 
 enum input_action_type
 {
-    INPUT_NONE,
-    INPUT_RIGHT,
-    INPUT_LEFT,
-    INPUT_UP,
-    INPUT_DOWN,
-    INPUT_INTERACT,
+    INPUT_ACTION_NONE,
+    INPUT_ACTION_RIGHT,
+    INPUT_ACTION_LEFT,
+    INPUT_ACTION_UP,
+    INPUT_ACTION_DOWN,
+    INPUT_ACTION_INTERACT,
     input_action_type_limit
+};
+enum input_type
+{
+    INPUT_KEYBOARD,
+    INPUT_JOYSTICK
+};
+
+#define JOYSTICK_AXIS_VALUE_TYPE_COUNT 2
+#define JOYSTICK_HAT_VALUE_TYPE_COUNT 4
+enum joystick_input_code
+{
+    JOYSTICK_AXIS_0_MIN,
+    JOYSTICK_AXIS_0_MAX,
+    JOYSTICK_AXIS_1_MIN,
+    JOYSTICK_AXIS_1_MAX,
+    JOYSTICK_AXIS_2_MIN,
+    JOYSTICK_AXIS_2_MAX,
+    JOYSTICK_AXIS_3_MIN,
+    JOYSTICK_AXIS_3_MAX,
+    JOYSTICK_AXIS_4_MIN,
+    JOYSTICK_AXIS_4_MAX,
+    JOYSTICK_AXIS_5_MIN,
+    JOYSTICK_AXIS_5_MAX,
+    JOYSTICK_AXIS_6_MIN,
+    JOYSTICK_AXIS_6_MAX,
+    JOYSTICK_AXIS_7_MIN,
+    JOYSTICK_AXIS_7_MAX,
+
+    JOYSTICK_HAT_0_NORTH,
+    JOYSTICK_HAT_0_EAST,
+    JOYSTICK_HAT_0_SOUTH,
+    JOYSTICK_HAT_0_WEST,
+    JOYSTICK_HAT_1_NORTH,
+    JOYSTICK_HAT_1_EAST,
+    JOYSTICK_HAT_1_SOUTH,
+    JOYSTICK_HAT_1_WEST,
+    JOYSTICK_HAT_2_NORTH,
+    JOYSTICK_HAT_2_EAST,
+    JOYSTICK_HAT_2_SOUTH,
+    JOYSTICK_HAT_2_WEST,
+    JOYSTICK_HAT_3_NORTH,
+    JOYSTICK_HAT_3_EAST,
+    JOYSTICK_HAT_3_SOUTH,
+    JOYSTICK_HAT_3_WEST,
+
+    JOYSTICK_BUTTON_0,
+    JOYSTICK_BUTTON_1,
+    JOYSTICK_BUTTON_2,
+    JOYSTICK_BUTTON_3,
+    JOYSTICK_BUTTON_4,
+    JOYSTICK_BUTTON_5,
+    JOYSTICK_BUTTON_6,
+    JOYSTICK_BUTTON_7,
+    JOYSTICK_BUTTON_8,
+    JOYSTICK_BUTTON_9,
+    JOYSTICK_BUTTON_10,
+    JOYSTICK_BUTTON_11,
+    JOYSTICK_BUTTON_12,
+    JOYSTICK_BUTTON_13,
+    JOYSTICK_BUTTON_14,
+    JOYSTICK_BUTTON_15,
+
+    joystick_input_limit
+};
+struct joystick_input
+{
+    enum joystick_input_code code;
+    int joystick_id;
+};
+struct joystick_default_map
+{
+    SDL_Joystick *joystick;
+    int joystick_axis_values[JOYSTICK_AXIS_LIMIT];
+};
+struct input_scancode
+{
+    uint8_t code;
+    enum input_type type;
 };
 struct input_action_data
 {
     enum input_action_type type;
-    uint8_t valid_scancodes[INPUT_VALID_SCANCODE_LIMIT];
+    struct input_scancode scancodes[INPUT_BUFFER_LIMIT];
     unsigned int scancode_count;
     bool held, just_pressed, just_released;
 };
@@ -157,6 +244,10 @@ struct game
     unsigned int timer_count;
 
     struct input_action_data input_actions[input_action_type_limit];
+    struct joystick_default_map joysticks[JOYSTICK_DEVICE_LIMIT];
+    struct joystick_input joystick_input_changed_this_frame[INPUT_BUFFER_LIMIT];
+    bool joystick_input_map[joystick_input_limit * JOYSTICK_DEVICE_LIMIT];
+    unsigned int joystick_input_count;
 
     struct graphic_layer screen;
     struct audio_bank audio;
